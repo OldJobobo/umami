@@ -2,9 +2,33 @@
 
 A flavor is a recipe of changes re-applied to whatever the newest Omarchy is. Changes are **transforms** (instructions that target something by meaning and check it still exists), not copies of upstream files, so every upstream update keeps flowing and the flavor rides on top.
 
-Status: prototype. The compositor and dry run work; installing a composed tree as the live `OMARCHY_PATH` comes next.
+Status: prototype. The dry run works, and a flavor runs live: verified in a VM on stock Omarchy 4.5.0 stable (desktop, shell, update, pacman hook, required-transform fallback, uninstall). Not yet tested across a real Omarchy version bump.
 
-## Use
+## Install on a machine (prototype)
+
+```bash
+./install.sh examples/jobo      # compositor -> /usr/lib/omarchy-flavor, recipe -> /etc/omarchy-flavor,
+                                # pacman hook, compose, point Omarchy at the tree; reboot after
+./uninstall.sh                  # back to stock from the next boot
+```
+
+Refuses to install while Omarchy is dev-linked to a checkout (`omarchy dev unlink` first). Once installed:
+
+```bash
+/usr/lib/omarchy-flavor/bin/omarchy-flavor status               # what Omarchy runs from + last report
+sudo /usr/lib/omarchy-flavor/bin/omarchy-flavor recompose       # after editing /etc/omarchy-flavor
+sudo /usr/lib/omarchy-flavor/bin/omarchy-flavor enable|disable  # flavor or stock, from the next boot
+```
+
+What happens on an update:
+
+1. `omarchy update` upgrades the Omarchy packages.
+2. The pacman hook (`/etc/pacman.d/hooks/90-omarchy-flavor.hook`) recomposes stock + recipe into `/var/lib/omarchy-flavor/tree.new` as root, then swaps it into `tree`, inside the transaction, so migrations run from the composed tree.
+3. A stale transform is reported in pacman's output and skipped. A required transform that can't apply leaves the running session alone and points `/etc/omarchy.conf` back at stock for the next boot.
+
+The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it instead of aborting the update, and is registered as a system git `safe.directory` because it is root-owned. Both go away once Omarchy has a flavor mode.
+
+## Dry run
 
 ```bash
 bin/omarchy-flavor plan examples/jobo/recipe.toml          # compose into a scratch dir, show report + changed files

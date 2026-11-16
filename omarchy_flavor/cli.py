@@ -10,6 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import system
 from .compose import REPORT_DIR, Composer
 from .recipe import RecipeError, load
 
@@ -100,6 +101,15 @@ def main(argv=None) -> int:
     compose.add_argument("--source", default=DEFAULT_SOURCE)
     compose.add_argument("--json", action="store_true")
     compose.set_defaults(func=cmd_compose)
+
+    recompose = sub.add_parser("recompose", help="root: compose /etc/omarchy-flavor/recipe.toml onto stock into /var/lib/omarchy-flavor/tree")
+    recompose.add_argument("--hook", action="store_true", help="called from the pacman hook: exit 0 even when the composition fails")
+    recompose.set_defaults(func=lambda args: system.recompose(hook=args.hook))
+
+    for name, help_text in (("enable", "root: point Omarchy at the composed tree (after reboot)"),
+                            ("disable", "root: point Omarchy back at stock (after reboot)"),
+                            ("status", "show what Omarchy runs from and the last composition report")):
+        sub.add_parser(name, help=help_text).set_defaults(func=lambda args, name=name: getattr(system, name)())
 
     args = parser.parse_args(argv)
     try:

@@ -1,0 +1,16 @@
+# Recompose the Omarchy flavor whenever stock Omarchy changes, inside the
+# package transaction, so `omarchy update` runs its migrations from the
+# composed tree.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = omarchy
+Target = omarchy-dev
+Target = omarchy-settings
+Target = omarchy-settings-dev
+
+[Action]
+Description = Recomposing the Omarchy flavor...
+When = PostTransaction
+Exec = /usr/lib/omarchy-flavor/bin/omarchy-flavor recompose --hook

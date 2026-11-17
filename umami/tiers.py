@@ -3,7 +3,7 @@
 A flavor is declarative unless it says otherwise. Declarative transforms are
 data the compositor checks and turns into configuration itself, the way
 Omarchy treats a theme: appearance and layout settings, bindings to a short
-list of actions, removing bar widgets and panels, and the [defaults] and
+list of actions, removing bar widgets and panels, and the [defaults], [locked] and
 [[plugin]] tables (plugins go through Omarchy's own validation and the user's
 consent). Nothing in them is run as written.
 

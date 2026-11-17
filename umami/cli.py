@@ -35,11 +35,15 @@ def print_report(report: dict):
         if patch["status"] != "applied":
             print(f"        note: built-in patch to {patch['file']} no longer applies ({patch['why']} may not hold)")
     for t in report["transforms"]:
-        print(f"  {MARK[t['status']]} {t['id']:<24} {t['type']}" + (" (required)" if t["required"] else ""))
+        flags = [f for f, on in (("required", t["required"]), ("locked", t.get("locked"))) if on]
+        print(f"  {MARK[t['status']]} {t['id']:<24} {t['type']}" + (f" ({', '.join(flags)})" if flags else ""))
         if t["detail"]:
             print(f"        {t['detail']}")
         for warning in t["warnings"]:
             print(f"        note: {warning}")
+    locked = system.locked_items(report)
+    if locked:
+        print(f"locked by the flavor (users can't change these): {', '.join(locked)}")
     print(f"status: {report['status']}" + (f" (blocked by {', '.join(report['blocking'])})" if report["blocking"] else ""))
 
 

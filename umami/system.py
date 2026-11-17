@@ -77,7 +77,21 @@ def summary(report: dict) -> str:
     for t in report["transforms"]:
         if t["status"] != "applied":
             lines.append(f"  {t['status']}: {t['id']}: {t['detail'] or '; '.join(t['warnings'])}")
+    locked = locked_items(report)
+    if locked:
+        lines.append(f"locked by the flavor: {', '.join(locked)}")
     return "\n".join(lines)
+
+
+def locked_items(report: dict) -> list:
+    """What the flavor locks, so a missing feature reads as its decision."""
+    items = [t["id"] for t in report["transforms"] if t.get("locked")]
+    table = report.get("locked") or {}
+    if table.get("theme"):
+        items.append(f"theme {table['theme']}")
+    if table.get("bar"):
+        items.append("bar layout")
+    return items
 
 
 def package_version() -> str:

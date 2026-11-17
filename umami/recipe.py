@@ -28,6 +28,12 @@ REQUIRED_KEYS = {
 }
 
 
+# Transforms that may say `locked = true`: loaded after the user's own
+# Hyprland files, so the flavor's setting or key wins. shell.plugins.remove is
+# always locked: it takes the plugin out of the tree.
+LOCKABLE = {"lua.set", "lua", "bind.add", "bind.replace", "bind.remove", "plugin.hypr", "shell.plugins.remove"}
+
+
 class RecipeError(Exception):
     pass
 
@@ -38,6 +44,7 @@ class Transform:
     type: str
     required: bool
     options: dict
+    locked: bool = False
 
     def get(self, key, default=None):
         return self.options.get(key, default)
@@ -51,6 +58,7 @@ class Recipe:
     transforms: list = field(default_factory=list)
     plugins: list = field(default_factory=list)
     defaults: dict = field(default_factory=dict)
+    locked: dict = field(default_factory=dict)
     code: bool = False
     code_transforms: list = field(default_factory=list)
 
@@ -115,8 +123,14 @@ def load(path) -> Recipe:
                 raise RecipeError(f"{where} ({tid}): sources must be a non-empty list of paths")
         if ttype == "patch" and sum(k in raw for k in ("insert_before", "insert_after", "replace_with")) != 1:
             raise RecipeError(f"{where} ({tid}): patch needs exactly one of insert_before, insert_after, replace_with")
-        options = {k: v for k, v in raw.items() if k not in ("id", "type", "required")}
-        recipe.transforms.append(Transform(tid, ttype, bool(raw.get("required", False)), options))
+        locked = raw.get("locked", False)
+        if not isinstance(locked, bool):
+            raise RecipeError(f"{where} ({tid}): locked must be true or false")
+        if locked and ttype not in LOCKABLE:
+            raise RecipeError(f"{where} ({tid}): {ttype} cannot be locked (only {', '.join(sorted(LOCKABLE))})")
+        options = {k: v for k, v in raw.items() if k not in ("id", "type", "required", "locked")}
+        recipe.transforms.append(Transform(tid, ttype, bool(raw.get("required", False)), options,
+                                           locked or ttype == "shell.plugins.remove"))
         reason = tiers.code_reason(ttype, options)
         if reason:
             recipe.code_transforms.append((tid, reason))
@@ -156,40 +170,46 @@ def load(path) -> Recipe:
         if t.type == "plugin.hypr" and t.get("plugin") not in seen_plugins:
             raise RecipeError(f"{t.id}: plugin.hypr names {t.get('plugin')!r}, which is not a [[plugin]] of this recipe")
 
-    # Per-user settings applied once, at a user's first login on the flavor.
-    defaults = data.get("defaults", {})
-    if not isinstance(defaults, dict):
-        raise RecipeError("[defaults] must be a table")
-    unknown = set(defaults) - {"theme", "bar"}
-    if unknown:
-        raise RecipeError(f"[defaults]: unknown keys {', '.join(sorted(unknown))}")
-    if "theme" in defaults and not (isinstance(defaults["theme"], str) and defaults["theme"].strip()):
-        raise RecipeError("[defaults] theme must be a theme name")
-    if "bar" in defaults:
-        check_bar_defaults(defaults["bar"])
-    recipe.defaults = dict(defaults)
+    # Per-user settings: [defaults] once, at a user's first login on the
+    # flavor (the user's later choice stays); [locked] at every login.
+    recipe.defaults = check_user_table("defaults", data.get("defaults", {}))
+    recipe.locked = check_user_table("locked", data.get("locked", {}))
     return recipe
+
+
+def check_user_table(name: str, table) -> dict:
+    """[defaults] or [locked]: a theme and a bar layout."""
+    if not isinstance(table, dict):
+        raise RecipeError(f"[{name}] must be a table")
+    unknown = set(table) - {"theme", "bar"}
+    if unknown:
+        raise RecipeError(f"[{name}]: unknown keys {', '.join(sorted(unknown))}")
+    if "theme" in table and not (isinstance(table["theme"], str) and table["theme"].strip()):
+        raise RecipeError(f"[{name}] theme must be a theme name")
+    if "bar" in table:
+        check_bar_defaults(table["bar"], name)
+    return dict(table)
 
 
 BAR_SECTIONS = {"left", "centerBegin", "center", "centerEnd", "tray", "right"}
 
 
-def check_bar_defaults(bar):
-    """[defaults.bar]: widgets to take off the bar, move, and configure."""
+def check_bar_defaults(bar, name="defaults"):
+    """[defaults.bar] or [locked.bar]: widgets to take off the bar, move, and configure."""
     if not isinstance(bar, dict):
-        raise RecipeError("[defaults.bar] must be a table")
+        raise RecipeError(f"[{name}.bar] must be a table")
     unknown = set(bar) - {"remove", "move", "set"}
     if unknown:
-        raise RecipeError(f"[defaults.bar]: unknown keys {', '.join(sorted(unknown))}")
+        raise RecipeError(f"[{name}.bar]: unknown keys {', '.join(sorted(unknown))}")
     remove = bar.get("remove", [])
     if not (isinstance(remove, list) and all(isinstance(i, str) and i for i in remove)):
-        raise RecipeError("[defaults.bar] remove must be a list of widget ids")
+        raise RecipeError(f"[{name}.bar] remove must be a list of widget ids")
     for entry in bar.get("move", []):
         if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not entry.get("id") \
                 or entry.get("section") not in BAR_SECTIONS:
-            raise RecipeError(f"[defaults.bar] move entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
+            raise RecipeError(f"[{name}.bar] move entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
         if "index" in entry and not (isinstance(entry["index"], int) and entry["index"] >= 0):
-            raise RecipeError("[defaults.bar] move index must be a whole number")
+            raise RecipeError(f"[{name}.bar] move index must be a whole number")
     for entry in bar.get("set", []):
         if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str):
-            raise RecipeError("[defaults.bar] set entries need id, key and a string value")
+            raise RecipeError(f"[{name}.bar] set entries need id, key and a string value")

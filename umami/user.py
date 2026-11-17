@@ -153,11 +153,12 @@ def defaults_file() -> Path:
 
 
 def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
-    """Apply the recipe's [defaults] once per user, flavor and value.
+    """Apply the recipe's [defaults] once per user, then its [locked] table.
 
     A default is applied the first time this user logs in on the flavor, and
-    again only if the flavor changes it. A theme the user picks afterwards is
-    theirs and stays.
+    again only where the flavor changes it. A theme the user picks afterwards
+    is theirs and stays. The bar is tracked entry by entry, so a flavor that
+    changes one widget moves only that one, not the rest of the user's layout.
     """
     try:
         applied = json.loads(defaults_file().read_text())
@@ -166,40 +167,97 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
     if not isinstance(applied, dict):
         applied = {}
     mine = applied.setdefault(recipe.name, {})
+    # Earlier versions stored the whole bar table once it was applied.
+    if isinstance(mine.get("bar"), dict):
+        mine["bar_done"] = sorted({command_key(c) for c in bar_commands(mine.pop("bar"))})
     lines = []
     theme = recipe.defaults.get("theme")
     if theme and mine.get("theme") != theme:
         if dry_run:
             lines.append(f"  would set theme {theme}")
         else:
-            result = run(["omarchy-theme-set", theme])
-            if result.returncode != 0:
-                raise PluginError(f"theme {theme}: " + (result.stderr or result.stdout).strip()[:300])
+            set_theme(theme)
             mine["theme"] = theme
             save_defaults(applied)
             lines.append(f"  set       theme {theme}")
 
     bar = recipe.defaults.get("bar")
-    if bar and mine.get("bar") != bar and waiting:
-        # The layout can place the flavor's plugins; wait until they're decided.
-        lines.append("  waiting   bar layout, until the plugins are decided")
-    elif bar and mine.get("bar") != bar:
-        # Leave out the parts about a flavor plugin that isn't installed.
-        absent = set() if dry_run else {p["id"] for p in recipe.plugins if not (plugins_dir() / p["id"]).exists()}
-        commands = [c for c in bar_commands(bar) if not set(c) & absent]
+    if bar:
+        commands = bar_commands(bar)
+        done = set(mine.get("bar_done", []))
+        todo = [c for c in commands if command_key(c) not in done]
+        if todo and waiting:
+            # The layout can place the flavor's plugins; wait until they're decided.
+            lines.append("  waiting   bar layout, until the plugins are decided")
+        elif todo:
+            todo = without_absent(recipe, todo, dry_run)
+            if dry_run:
+                lines += [f"  would run {' '.join(c)}" for c in todo]
+            elif todo:
+                run_bar(todo, shell_timeout)
+                done |= {command_key(c) for c in todo}
+                current = {command_key(c) for c in commands}
+                mine["bar_done"] = sorted(done & current)
+                save_defaults(applied)
+                lines.append("  set       bar layout" + ("" if len(todo) == len(commands) else f" ({len(todo)} changed)"))
+    return lines + apply_locked(recipe, dry_run, shell_timeout, waiting)
+
+
+def apply_locked(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
+    """[locked]: the flavor's theme and bar, put back at every login."""
+    lines = []
+    theme = recipe.locked.get("theme")
+    if theme:
+        try:
+            current = run(["omarchy-theme-current"]).stdout.strip()
+        except OSError:
+            current = ""
+        norm = lambda name: name.strip().lower().replace("-", " ")
+        if norm(current) != norm(theme):
+            if dry_run:
+                lines.append(f"  would set theme {theme} (locked)")
+            else:
+                set_theme(theme)
+                lines.append(f"  locked    theme {theme}")
+    bar = recipe.locked.get("bar")
+    if bar and waiting:
+        lines.append("  waiting   locked bar layout, until the plugins are decided")
+    elif bar:
+        commands = without_absent(recipe, bar_commands(bar), dry_run)
         if dry_run:
-            lines += [f"  would run {' '.join(c)}" for c in commands]
-        else:
-            if not wait_for_shell(shell_timeout):
-                raise PluginError("bar layout: the shell is not running (run umami user-sync again)")
-            for command in commands:
-                result = run(command)
-                if result.returncode != 0:
-                    raise PluginError(f"bar layout: {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:300])
-            mine["bar"] = bar
-            save_defaults(applied)
-            lines.append("  set       bar layout")
+            lines += [f"  would run {' '.join(c)} (locked)" for c in commands]
+        elif commands:
+            run_bar(commands, shell_timeout)
+            lines.append("  locked    bar layout")
     return lines
+
+
+def command_key(command: list) -> str:
+    return json.dumps(command)
+
+
+def set_theme(theme: str):
+    result = run(["omarchy-theme-set", theme])
+    if result.returncode != 0:
+        raise PluginError(f"theme {theme}: " + (result.stderr or result.stdout).strip()[:300])
+
+
+def without_absent(recipe, commands: list, dry_run: bool) -> list:
+    """Leave out the parts about a flavor plugin that isn't installed."""
+    absent = set() if dry_run else {p["id"] for p in recipe.plugins if not (plugins_dir() / p["id"]).exists()}
+    return [c for c in commands if not set(c) & absent]
+
+
+def run_bar(commands: list, shell_timeout: float):
+    if not wait_for_shell(shell_timeout):
+        raise PluginError("bar layout: the shell is not running (run umami user-sync again)")
+    for command in commands:
+        result = run(command)
+        # A widget this Omarchy doesn't have is already off the bar.
+        if result.returncode != 0 and command[0] == "omarchy-plugin-disable" and "is not known" in result.stderr:
+            continue
+        if result.returncode != 0:
+            raise PluginError(f"bar layout: {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:300])
 
 
 def bar_commands(bar: dict) -> list:
@@ -257,7 +315,7 @@ def open_review():
 
 def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive=False, assume_yes=False) -> int:
     recipe = load(recipe_path)
-    if not recipe.plugins and not recipe.defaults:
+    if not recipe.plugins and not recipe.defaults and not recipe.locked:
         return 0
     state = load_state()
     lines, failed, installed = [], 0, []

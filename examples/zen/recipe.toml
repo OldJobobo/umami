@@ -39,7 +39,9 @@ theme = "Vantablack"
 # with everything else behind it. Point at the mark to bring them out.
 #
 # A widget goes only where its shortcut works without it. The menu button
-# (Super+Space) and the keyboard layout (Super+I) are taken off. The Audio,
+# (Super+Space) and the keyboard layout (Super+I) are taken off, and so are
+# the world clock, weather and AI usage widgets, with their keys. They are
+# only switched off: turn one back on in the bar's settings and it stays. The Audio,
 # Network, Bluetooth, Display and Power panels open from their bar icon, so
 # Super+Ctrl+A/N/B/D/P need them: they go in Pocket, and their panels still
 # open from there. So does which-key's icon, which holds its Enabled switch.
@@ -48,11 +50,18 @@ theme = "Vantablack"
 # when updates are ready, and that should be seen.
 #
 # Applied once, through Omarchy's own `omarchy plugin disable` and
-# `omarchy bar move/set`, so a layout you make afterwards stays. Pocket
+# `omarchy bar move/set`, so a layout you make afterwards stays. When a new
+# Zen changes an entry here, only that entry is applied again. Pocket
 # holds the run of its members just left of its mark, so it goes last and
 # the tray goes before that run.
 [defaults.bar]
-remove = ["omarchy.menu", "omarchy.keyboard-layout"]
+remove = [
+  "omarchy.menu",
+  "omarchy.keyboard-layout",
+  "omarchy.elsewhen",
+  "omarchy.weather",
+  "omarchy.agents",
+]
 move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
@@ -115,12 +124,8 @@ type = "lua.set"
 path = "general.gaps_out"
 value = 4
 
-[[transform]]
-id = "quiet-bar"
-type = "shell.plugins.remove"
-ids = ["omarchy.elsewhen", "omarchy.weather", "omarchy.agents"]
-
-# And the keys that opened them.
+# The keys that opened the world clock, weather and Agents panels. Bind one
+# again in ~/.config/hypr/bindings.lua and yours wins.
 [[transform]]
 id = "no-weather-key"
 type = "bind.remove"

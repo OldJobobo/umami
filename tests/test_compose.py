@@ -485,6 +485,69 @@ class TierTest(Fixture):
         self.assertEqual(t["free"]["status"], "applied")
 
 
+class LockedTest(Fixture):
+    """Defaults the user can change; locks the flavor keeps."""
+
+    LOCKED = """
+        [[transform]]
+        id = "corners"
+        type = "lua.set"
+        path = "decoration.rounding"
+        value = 0
+        locked = true
+
+        [[transform]]
+        id = "gaps"
+        type = "lua.set"
+        path = "general.gaps_out"
+        value = 4
+    """
+
+    def test_a_locked_transform_loads_after_the_users_config(self):
+        write(self.source / "default/hypr/toggles.lua", "require_all.files(toggles_dir)\n")
+        report, t = self.compose(self.LOCKED, code=False)
+        self.assertEqual(report["status"], "ok")
+        locked = (self.dest / "default/hypr/flavor-locked.lua").read_text()
+        self.assertIn("rounding = 0", locked)
+        self.assertNotIn("gaps_out", locked)
+        self.assertNotIn("rounding", (self.dest / "default/hypr/flavor.lua").read_text())
+        toggles = (self.dest / "default/hypr/toggles.lua").read_text()
+        self.assertTrue(toggles.rstrip().endswith('require("default.hypr.flavor-locked")'))
+        self.assertTrue(t["corners"]["locked"])
+        self.assertFalse(t["gaps"]["locked"])
+
+    def test_without_toggles_lua_a_lock_is_reported_as_not_holding(self):
+        report, t = self.compose(self.LOCKED, code=False)
+        self.assertEqual(t["corners"]["status"], "drift")
+        self.assertTrue(any("do not hold" in w for w in t["corners"]["warnings"]))
+        self.assertIn('require("default.hypr.flavor-locked")', (self.dest / "default/hypr/flavor.lua").read_text())
+
+    def test_removing_a_plugin_from_the_tree_is_a_lock(self):
+        report, t = self.compose("""
+            [[transform]]
+            id = "no-weather"
+            type = "shell.plugins.remove"
+            ids = ["omarchy.weather"]
+        """, code=False)
+        self.assertTrue(t["no-weather"]["locked"])
+
+    def test_only_some_transforms_can_be_locked(self):
+        with self.assertRaises(RecipeError):
+            self.recipe('[[transform]]\nid = "x"\ntype = "file.remove"\npath = "version"\nlocked = true\n')
+        with self.assertRaises(RecipeError):
+            self.recipe('[[transform]]\nid = "x"\ntype = "bind.remove"\nkeys = "super+q"\nlocked = "yes"\n')
+
+    def test_the_locked_table_is_checked_like_defaults(self):
+        self.assertEqual(self.recipe('[locked]\ntheme = "Nord"\n', code=False).locked, {"theme": "Nord"})
+        for body in ('[locked]\nfont = "x"\n', '[locked.bar]\nmove = [{ id = "x", section = "middle" }]\n'):
+            with self.assertRaises(RecipeError):
+                self.recipe(body, code=False)
+
+    def test_a_locked_table_alone_starts_the_user_layer(self):
+        self.compose('[locked]\ntheme = "Nord"\n', code=False)
+        self.assertIn("user-sync", (self.dest / "default/hypr/flavor.lua").read_text())
+
+
 class BuiltinPatchTest(Fixture):
     def test_the_flavor_tree_counts_as_a_package_install(self):
         write(self.source / "bin/omarchy-version",

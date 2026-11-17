@@ -18,9 +18,10 @@ FAKES = {
     "omarchy-plugin-list": 'echo "[{\\"id\\": \\"acme.dock\\"}]"',
     "omarchy-shell": 'echo "shell $*" >> "$FAKE_LOG"',
     "notify-send": 'echo "notify $*" >> "$FAKE_LOG"',
-    "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"',
+    "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.theme"',
+    "omarchy-theme-current": 'cat "$FAKE_LOG.theme" 2>/dev/null || echo Unknown',
     "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"',
-    "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"',
+    "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"; [[ $1 != *missing* ]] || { echo "plugin \'$1\' is not known" >&2; exit 1; }',
     "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
     "omarchy-launch-floating-terminal-with-presentation": 'echo "review $*" >> "$FAKE_LOG"',
 }
@@ -202,6 +203,55 @@ class UserLayerTest(unittest.TestCase):
         path.write_text('[flavor]\nname = "test"\n\n[defaults]\nfont = "x"\n')
         with self.assertRaises(RecipeError):
             load(path)
+
+    def write_recipe(self, text):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(text)
+        return path
+
+    def bar_calls(self):
+        return [c for c in self.log.read_text().splitlines() if c.startswith(("disable", "bar"))]
+
+    def test_a_changed_flavor_reapplies_only_the_bar_entries_it_changed(self):
+        path = self.write_recipe(self.BAR)
+        user.sync(path, shell_timeout=1)
+        self.log.write_text("")
+        # The user rearranges the bar; a new release adds one move and changes the format.
+        self.write_recipe(self.BAR.replace(
+            'move = [{ id = "omarchy.clock", section = "left", index = 0 }]',
+            'move = [{ id = "omarchy.clock", section = "left", index = 0 }, { id = "omarchy.tray", section = "right" }]'
+        ).replace('"HH:mm"', '"HH:mm:ss"'))
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertEqual(self.bar_calls(), ["bar move omarchy.tray --section right", "bar set omarchy.clock format HH:mm:ss"])
+
+    def test_a_bar_applied_by_an_earlier_version_is_not_applied_again(self):
+        path = self.write_recipe(self.BAR)
+        bar = load(path).defaults["bar"]
+        user.save_defaults({"test": {"bar": bar}})
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertEqual(self.bar_calls(), [])
+
+    def test_hiding_a_widget_this_omarchy_lacks_is_not_a_failure(self):
+        path = self.write_recipe(self.BAR.replace('remove = ["omarchy.menu"]', 'remove = ["omarchy.missing", "omarchy.menu"]'))
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertIn("disable omarchy.menu", self.log.read_text())
+
+    def test_a_locked_theme_comes_back_at_every_login(self):
+        path = self.write_recipe('[flavor]\nname = "test"\n\n[locked]\ntheme = "Tokyo Night"\n')
+        self.assertEqual(user.sync(path), 0)
+        self.assertEqual(self.log.read_text().count("theme Tokyo Night"), 1)
+        user.sync(path)  # still the company theme: nothing to do
+        self.assertEqual(self.log.read_text().count("theme Tokyo Night"), 1)
+        Path(f"{self.log}.theme").write_text("nord\n")  # the user picks another
+        user.sync(path)
+        self.assertEqual(self.log.read_text().count("theme Tokyo Night"), 2)
+
+    def test_a_locked_bar_is_applied_at_every_login(self):
+        path = self.write_recipe(self.BAR.replace("[defaults.bar]", "[locked.bar]"))
+        user.sync(path, shell_timeout=1)
+        user.sync(path, shell_timeout=1)
+        self.assertEqual(self.bar_calls().count("bar set omarchy.clock format HH:mm"), 2)
 
     # ------------------------------------------------------------ consent
 

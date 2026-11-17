@@ -1,0 +1,62 @@
+# Company: Omarchy as an employer might hand it out.
+#
+# Shows the two strengths a flavor can set things with. A default is where
+# the flavor starts, and a user's change stays. A lock is the flavor's rule:
+# it comes back at every login, or the feature is simply not there.
+#
+# Locked here:
+#   - the company theme, put back at every login
+#   - square window corners, whatever the user's looknfeel.lua says
+#   - the screen recording keys, which a user can't bind again
+#   - the AI usage widget, which is not available at all
+#
+# Defaults here: everything else is stock, and the clock shows the date.
+#
+# Locks hold against Omarchy's settings, bar, menus and commands. They are
+# not a security boundary: anyone with sudo can switch the flavor off. Give
+# people accounts without admin rights for that; the composed tree and the
+# recipe are root-owned.
+#
+# `umami status` lists what is locked, so a missing feature reads as the
+# company's decision rather than a fault.
+
+[flavor]
+name = "company"
+
+# Put back at every login.
+[locked]
+theme = "Tokyo Night"
+
+# Applied once; the user can change it.
+[defaults.bar]
+set = [
+  { id = "omarchy.clock", key = "format", value = "ddd d MMM  HH:mm" },
+]
+
+# Not available: the widget is taken out of the composed tree, so there is
+# nothing to turn back on.
+[[transform]]
+id = "no-ai-usage"
+type = "shell.plugins.remove"
+ids = ["omarchy.agents"]
+
+# No screen recording from the keyboard, even if a user binds it again in
+# ~/.config/hypr/bindings.lua: locked transforms load after the user's files.
+[[transform]]
+id = "no-screen-recording"
+type = "bind.remove"
+keys = "ALT + PRINT"
+locked = true
+
+[[transform]]
+id = "no-silent-screen-recording"
+type = "bind.remove"
+keys = "SUPER + SHIFT + CTRL + ALT + C"
+locked = true
+
+[[transform]]
+id = "square-corners"
+type = "lua.set"
+path = "decoration.rounding"
+value = 0
+locked = true

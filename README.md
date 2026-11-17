@@ -68,7 +68,7 @@ A transform with `required = true` that ends stale or failed makes the whole com
 | `command.wrap` | `command`, `before`?, `after`?, `after_on_failure`? | Original moves to `bin/.flavor/`; privileged entrypoints refuse wrapping |
 | `command.replace` | `command`, `source`, `upstream_sha256`? | |
 | `shell.plugins.add` | `source` (dir with `manifest.json`) | Installed under `shell/plugins/flavor/<id>/`, trusted as first-party |
-| `shell.plugins.remove` | `ids` | Removes the manifest only; the code stays for anything importing it |
+| `shell.plugins.remove` | `ids` | A lock: removes the manifest, so the plugin can't be turned back on (the code stays for anything importing it). To only switch a widget off, use `[defaults.bar] remove` |
 | `shell.plugins.replace` | `plugin`, `source` | Reports IPC functions the original answered that the replacement doesn't |
 | `shell` | `source` (dir with `shell.qml`) | Whole-shell replacement, same IPC check |
 
@@ -115,13 +115,37 @@ move = [{ id = "omarchy.clock", section = "left", index = 0 }]   # omarchy bar m
 set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }] # omarchy bar set
 ```
 
-The bar layout works the same way, once, through Omarchy's own commands; a layout the user makes afterwards stays.
+The bar layout works the same way, through Omarchy's own commands; a layout the user makes afterwards stays. Each entry is tracked on its own, so when a new release of the flavor changes one entry, only that entry is applied again. A widget that a release of Omarchy doesn't have is skipped.
+
+## Defaults and locks
+
+Everything above is a default: where the flavor starts, which the user can change and keep. A flavor can also lock things, for a company that wants certain things simply not available:
+
+```toml
+[locked]                  # put back at every login
+theme = "Tokyo Night"
+
+[[transform]]             # loaded after the user's ~/.config/hypr files, so it wins
+id = "no-screen-recording"
+type = "bind.remove"
+keys = "ALT + PRINT"
+locked = true
+```
+
+| | Default | Locked |
+| --- | --- | --- |
+| Widgets and panels | `[defaults.bar] remove`: switched off once, can be turned back on | `shell.plugins.remove`: taken out of the tree, nothing to turn on |
+| Theme and bar | `[defaults]`: once | `[locked]`: at every login |
+| Settings and keys | before `~/.config/hypr`: the user wins | `locked = true` (on `lua.set`, `lua`, `bind.*`, `plugin.hypr`): after it, the flavor wins |
+
+Locked transforms go in `default/hypr/flavor-locked.lua`, loaded at the end of `default/hypr/toggles.lua`, which Omarchy's `hyprland.lua` requires after the user's own files. `umami plan` and `umami status` list what is locked. A lock holds against Omarchy's settings, bar, menus and commands; it is not a security boundary, since anyone with sudo can switch the flavor off. For that, give people accounts without admin rights.
 
 ## Examples
 
 | Flavor | Shows |
 | --- | --- |
-| [`examples/zen`](examples/zen/recipe.toml) | Settings, plugin removal, many binding changes, raw Lua, two marketplace plugins |
+| [`examples/zen`](examples/zen/recipe.toml) | Defaults only: settings, a quieter bar the user can change back, many binding changes, two marketplace plugins |
+| [`examples/company`](examples/company/recipe.toml) | Locks: a theme put back at every login, keys and a setting the user can't override, a widget that isn't there |
 | [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Declarative: four marketplace plugins wired to keys (one loads its own Hyprland file through `plugin.hypr`, one replaces the lock screen), a Mac-style bar and look, a light theme |
 | [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |
 | [`examples/jobo`](examples/jobo/recipe.toml) | Carrying open pull requests as diffs, a version per Omarchy line |

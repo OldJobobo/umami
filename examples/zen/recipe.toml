@@ -30,8 +30,9 @@ name = "zen"
 [defaults]
 theme = "Vantablack"
 
-# The bar: no menu button (Super+Space opens the menu), the date and time
-# small on the left, the workspaces in the middle. Applied once too, through
+# The bar: no menu button (Super+Space opens the menu), the time and date
+# small on the left with the status indicators after them, the workspaces
+# in the middle. Applied once too, through
 # Omarchy's own `omarchy plugin disable` and `omarchy bar move/set`, so a
 # layout you make afterwards stays.
 [defaults.bar]
@@ -39,6 +40,7 @@ remove = ["omarchy.menu"]
 move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
+  { id = "omarchy.indicators", section = "left", index = 1 },
 ]
 set = [{ id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" }]
 

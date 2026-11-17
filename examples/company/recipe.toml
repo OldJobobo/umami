@@ -7,7 +7,7 @@
 # Locked here:
 #   - the company theme, put back at every login
 #   - square window corners, whatever the user's looknfeel.lua says
-#   - the screen recording keys, which a user can't bind again
+#   - the screen recording key, which a user can't bind again
 #   - the AI usage widget, which is not available at all
 #
 # Defaults here: everything else is stock, and the clock shows the date.
@@ -40,18 +40,12 @@ id = "no-ai-usage"
 type = "shell.plugins.remove"
 ids = ["omarchy.agents"]
 
-# No screen recording from the keyboard, even if a user binds it again in
+# No screen recording from the keyboard (Alt+Print), even if a user binds it again in
 # ~/.config/hypr/bindings.lua: locked transforms load after the user's files.
 [[transform]]
 id = "no-screen-recording"
 type = "bind.remove"
 keys = "ALT + PRINT"
-locked = true
-
-[[transform]]
-id = "no-silent-screen-recording"
-type = "bind.remove"
-keys = "SUPER + SHIFT + CTRL + ALT + C"
 locked = true
 
 [[transform]]

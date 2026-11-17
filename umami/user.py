@@ -394,7 +394,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
         lines.append(f"  FAILED    {error}")
 
     print(f"flavor {recipe.name}: user layer")
-    print("\n".join(lines))
+    print("\n".join(lines) if lines else "  nothing to do")
     if (installed or failed) and not dry_run and shutil.which("notify-send"):
         body = (f"Installed or updated: {', '.join(installed)}. " if installed else "") + (f"{failed} failed; run umami user-sync to see why." if failed else "")
         run(["notify-send", "-a", "umami", f"Flavor {recipe.name}", body.strip()])

@@ -1,7 +1,7 @@
 """Live-system side of a flavor: recompose the tree and point Omarchy at it.
 
 Everything here runs as root (from the pacman hook or through sudo) and reads
-only root-owned inputs: the recipe in /etc/omarchy-flavor and the stock
+only root-owned inputs: the recipe in /etc/umami and the stock
 package in /usr/share/omarchy.
 """
 
@@ -17,19 +17,19 @@ from .compose import Composer
 from .recipe import load
 
 STOCK = Path("/usr/share/omarchy")
-RECIPE = Path("/etc/omarchy-flavor/recipe.toml")
-STATE = Path("/var/lib/omarchy-flavor")
+RECIPE = Path("/etc/umami/recipe.toml")
+STATE = Path("/var/lib/umami")
 TREE = STATE / "tree"
 REPORT = STATE / "report.json"
 OMARCHY_CONF = Path("/etc/omarchy.conf")
 SUDOERS = Path("/etc/sudoers.d/omarchy-dev-path")
 SYSTEM_SECURE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin"
-CONF_MARKER = "# Written by omarchy-flavor"
+CONF_MARKER = "# Written by umami"
 
 
 def require_root():
     if os.geteuid() != 0:
-        sys.exit("omarchy-flavor: this needs root (run it through sudo)")
+        sys.exit("umami: this needs root (run it through sudo)")
 
 
 def git_mark(tree: Path):
@@ -58,7 +58,7 @@ def point_at(path: Path):
     if path == STOCK:
         SUDOERS.unlink(missing_ok=True)
         return
-    with tempfile.NamedTemporaryFile("w", dir="/etc/sudoers.d", prefix=".omarchy-flavor-", delete=False) as staged:
+    with tempfile.NamedTemporaryFile("w", dir="/etc/sudoers.d", prefix=".umami-", delete=False) as staged:
         staged.write(f'Defaults secure_path="{path}/bin:{SYSTEM_SECURE_PATH}"\n')
     try:
         subprocess.run(["visudo", "-cqf", staged.name], check=True)
@@ -98,7 +98,7 @@ def recompose(hook: bool = False) -> int:
     if not RECIPE.is_file():
         if hook:
             return 0  # the package is installed, but no flavor has been picked
-        sys.exit(f"omarchy-flavor: no flavor picked yet ({RECIPE} is missing); try: sudo omarchy-flavor use zen")
+        sys.exit(f"umami: no flavor picked yet ({RECIPE} is missing); try: sudo umami use zen")
     STATE.mkdir(parents=True, exist_ok=True)
     new = STATE / "tree.new"
     old = STATE / "tree.old"
@@ -116,9 +116,9 @@ def recompose(hook: bool = False) -> int:
         # Omarchy runs stock until the recipe is fixed.
         shutil.rmtree(new)
         point_at(STOCK)
-        print("omarchy-flavor: FAILED: a required transform could not apply.")
-        print("omarchy-flavor: Omarchy will run stock after the next reboot. Fix the recipe, then:")
-        print("omarchy-flavor:   sudo omarchy-flavor recompose && sudo omarchy-flavor enable")
+        print("umami: FAILED: a required transform could not apply.")
+        print("umami: Omarchy will run stock after the next reboot. Fix the recipe, then:")
+        print("umami:   sudo umami recompose && sudo umami enable")
         return 0 if hook else 2
 
     git_mark(new)
@@ -133,26 +133,26 @@ def recompose(hook: bool = False) -> int:
 def enable() -> int:
     require_root()
     if not TREE.is_dir():
-        sys.exit("omarchy-flavor: no composed tree yet (run recompose first)")
+        sys.exit("umami: no composed tree yet (run recompose first)")
     git_safe_directory()
     point_at(TREE)
     print(f"Omarchy will run from {TREE} after the next reboot.")
     return 0
 
 
-EXAMPLES = Path("/usr/share/omarchy-flavor/flavors")
+EXAMPLES = Path("/usr/share/umami/flavors")
 
 
 def use(flavor: str) -> int:
     """Install a flavor: a name from the package's flavors, or a recipe
-    directory. Copies it to /etc/omarchy-flavor, composes, and enables it."""
+    directory. Copies it to /etc/umami, composes, and enables it."""
     require_root()
     source = Path(flavor)
     if not (source / "recipe.toml").is_file():
         source = EXAMPLES / flavor
     if not (source / "recipe.toml").is_file():
         names = sorted(p.name for p in EXAMPLES.iterdir() if (p / "recipe.toml").is_file()) if EXAMPLES.is_dir() else []
-        sys.exit(f"omarchy-flavor: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
+        sys.exit(f"umami: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
     recipe = load(source / "recipe.toml")  # refuses a broken recipe before anything changes
 
     if OMARCHY_CONF.is_file() and CONF_MARKER not in OMARCHY_CONF.read_text():
@@ -160,7 +160,7 @@ def use(flavor: str) -> int:
             if line.startswith("export OMARCHY_PATH="):
                 current = line.split("=", 1)[1].strip('"')
                 if current.rstrip("/") != str(STOCK):
-                    sys.exit(f"omarchy-flavor: Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
+                    sys.exit(f"umami: Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
 
     print(f"flavor {recipe.name}: " + ("runs code, trusted like a package" if recipe.code else "declarative"))
     staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")

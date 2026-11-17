@@ -1,0 +1,17 @@
+post_install() {
+  echo "Pick a flavor to start: sudo umami use zen"
+  echo "Flavors: /usr/share/umami/flavors (or a directory with your own recipe.toml)"
+}
+
+pre_remove() {
+  # Point Omarchy back at stock before the compositor goes away.
+  if grep -q '^# Written by umami' /etc/omarchy.conf 2>/dev/null; then
+    /usr/lib/umami/bin/umami disable
+    echo "Reboot to finish returning to stock Omarchy."
+  fi
+}
+
+post_remove() {
+  git config --system --unset-all safe.directory /var/lib/umami/tree 2>/dev/null || true
+  echo "After the reboot you can delete /etc/umami and /var/lib/umami."
+}

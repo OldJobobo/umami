@@ -6,4 +6,4 @@
 # Isolated mode: no user site-packages, no PYTHONPATH, no script-directory
 # imports. The package is found from this launcher's real location.
 here=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
-exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from omarchy_flavor.cli import main; sys.exit(main(sys.argv[1:]))' "$here/.." "$@"
+exec python3 -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from umami.cli import main; sys.exit(main(sys.argv[1:]))' "$here/.." "$@"

@@ -32,8 +32,8 @@ from pathlib import Path
 
 from .recipe import load
 
-TREE_RECIPE = Path("/var/lib/omarchy-flavor/tree/.flavor/recipe.toml")
-SELF = "/usr/lib/omarchy-flavor/bin/omarchy-flavor"
+TREE_RECIPE = Path("/var/lib/umami/tree/.flavor/recipe.toml")
+SELF = "/usr/lib/umami/bin/umami"
 
 # Omarchy's own words from omarchy plugin add.
 WARNING = """\
@@ -49,12 +49,12 @@ def plugins_dir() -> Path:
 
 def state_file() -> Path:
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")
-    return Path(base) / "omarchy-flavor/plugins.json"
+    return Path(base) / "umami/plugins.json"
 
 
 def cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "omarchy-flavor"
+    return Path(base) / "umami"
 
 
 def load_state() -> dict:
@@ -191,7 +191,7 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
             lines += [f"  would run {' '.join(c)}" for c in commands]
         else:
             if not wait_for_shell(shell_timeout):
-                raise PluginError("bar layout: the shell is not running (run omarchy-flavor user-sync again)")
+                raise PluginError("bar layout: the shell is not running (run umami user-sync again)")
             for command in commands:
                 result = run(command)
                 if result.returncode != 0:
@@ -338,6 +338,6 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
     print(f"flavor {recipe.name}: user layer")
     print("\n".join(lines))
     if (installed or failed) and not dry_run and shutil.which("notify-send"):
-        body = (f"Installed or updated: {', '.join(installed)}. " if installed else "") + (f"{failed} failed; run omarchy-flavor user-sync to see why." if failed else "")
-        run(["notify-send", "-a", "omarchy-flavor", f"Flavor {recipe.name}", body.strip()])
+        body = (f"Installed or updated: {', '.join(installed)}. " if installed else "") + (f"{failed} failed; run umami user-sync to see why." if failed else "")
+        run(["notify-send", "-a", "umami", f"Flavor {recipe.name}", body.strip()])
     return 1 if failed else 0

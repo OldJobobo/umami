@@ -7,8 +7,8 @@ import time
 import unittest
 from pathlib import Path
 
-from omarchy_flavor import user
-from omarchy_flavor.recipe import RecipeError, load
+from umami import user
+from umami.recipe import RecipeError, load
 
 # Stand-ins for Omarchy's commands: each logs its arguments, and the validator
 # refuses a plugin whose manifest says "invalid".
@@ -137,7 +137,7 @@ class UserLayerTest(unittest.TestCase):
     def test_a_commit_not_in_the_repository_is_refused(self):
         self.assertEqual(self.sync("0" * 40), 1)
         self.assertFalse(self.installed.exists())
-        self.assertEqual(list((self.home / ".cache/omarchy-flavor").iterdir()), [])
+        self.assertEqual(list((self.home / ".cache/umami").iterdir()), [])
 
     def test_dry_run_changes_nothing(self):
         self.assertEqual(self.sync(self.first, dry_run=True), 0)
@@ -212,7 +212,7 @@ class UserLayerTest(unittest.TestCase):
             if "review" in self.log.read_text():
                 break
             time.sleep(0.02)
-        self.assertIn("review /usr/lib/omarchy-flavor/bin/omarchy-flavor user-sync --review", self.log.read_text())
+        self.assertIn("review /usr/lib/umami/bin/umami user-sync --review", self.log.read_text())
         self.assertNotIn("enable", self.log.read_text())
 
     def test_saying_no_keeps_the_plugin_away(self):

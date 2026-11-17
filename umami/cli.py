@@ -1,4 +1,4 @@
-"""omarchy-flavor command line."""
+"""umami command line."""
 
 import argparse
 import difflib
@@ -66,7 +66,7 @@ def diff(source: Path, dest: Path, full: bool) -> str:
 
 def cmd_plan(args) -> int:
     recipe = load(args.recipe)
-    with tempfile.TemporaryDirectory(prefix="omarchy-flavor-plan-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="umami-plan-") as scratch:
         dest = Path(scratch) / "tree"
         report = Composer(recipe, Path(args.source), dest).run()
         print_report(report)
@@ -91,7 +91,7 @@ def cmd_compose(args) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="omarchy-flavor", description="Compose a flavor recipe onto stock Omarchy.")
+    parser = argparse.ArgumentParser(prog="umami", description="Compose a flavor recipe onto stock Omarchy.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser("plan", help="compose into a scratch directory and show what would change")
@@ -108,7 +108,7 @@ def main(argv=None) -> int:
     compose.add_argument("--json", action="store_true")
     compose.set_defaults(func=cmd_compose)
 
-    recompose = sub.add_parser("recompose", help="root: compose /etc/omarchy-flavor/recipe.toml onto stock into /var/lib/omarchy-flavor/tree")
+    recompose = sub.add_parser("recompose", help="root: compose /etc/umami/recipe.toml onto stock into /var/lib/umami/tree")
     recompose.add_argument("--hook", action="store_true", help="called from the pacman hook: exit 0 even when the composition fails")
     recompose.set_defaults(func=lambda args: system.recompose(hook=args.hook))
 
@@ -134,7 +134,7 @@ def main(argv=None) -> int:
     try:
         return args.func(args)
     except RecipeError as error:
-        print(f"omarchy-flavor: {error}", file=sys.stderr)
+        print(f"umami: {error}", file=sys.stderr)
         return 1
 
 

@@ -1,13 +1,15 @@
-# omarchy-flavor
+# Umami Flavors
+
+An unofficial add-on for [Omarchy](https://omarchy.org). The Omarchy name is kept for official Omarchy features; if flavors are adopted upstream, they can take an Omarchy name then. The command is `umami`.
 
 A flavor is a recipe of changes re-applied to whatever the newest Omarchy is. Changes are **transforms** (instructions that target something by meaning and check it still exists), not copies of upstream files, so every upstream update keeps flowing and the flavor rides on top.
 
-Status: prototype. The dry run works, and a flavor runs live: verified in a VM on stock Omarchy 4.5.0 stable (desktop, shell, update, pacman hook, required-transform fallback, uninstall). Not yet tested across a real Omarchy version bump.
+Status: prototype. The dry run works, and a flavor runs live: verified in a VM on stock Omarchy 4.5.0 stable (desktop, shell, update, pacman hook, required-transform fallback, uninstall). Also verified from the package (`sudo umami use zen`), and across a real Omarchy version change: a switch from stable 4.5.0 to edge, with the pacman hook recomposing the flavor. Not yet tested across a stable release bump.
 
 ## Install on a machine (prototype)
 
 ```bash
-./install.sh examples/jobo      # compositor -> /usr/lib/omarchy-flavor, recipe -> /etc/omarchy-flavor,
+./install.sh examples/jobo      # compositor -> /usr/lib/umami, recipe -> /etc/umami,
                                 # pacman hook, compose, point Omarchy at the tree; reboot after
 ./uninstall.sh                  # back to stock from the next boot
 ```
@@ -15,15 +17,15 @@ Status: prototype. The dry run works, and a flavor runs live: verified in a VM o
 Refuses to install while Omarchy is dev-linked to a checkout (`omarchy dev unlink` first). Once installed:
 
 ```bash
-/usr/lib/omarchy-flavor/bin/omarchy-flavor status               # what Omarchy runs from + last report
-sudo /usr/lib/omarchy-flavor/bin/omarchy-flavor recompose       # after editing /etc/omarchy-flavor
-sudo /usr/lib/omarchy-flavor/bin/omarchy-flavor enable|disable  # flavor or stock, from the next boot
+/usr/lib/umami/bin/umami status               # what Omarchy runs from + last report
+sudo /usr/lib/umami/bin/umami recompose       # after editing /etc/umami
+sudo /usr/lib/umami/bin/umami enable|disable  # flavor or stock, from the next boot
 ```
 
 What happens on an update:
 
 1. `omarchy update` upgrades the Omarchy packages.
-2. The pacman hook (`/etc/pacman.d/hooks/90-omarchy-flavor.hook`) recomposes stock + recipe into `/var/lib/omarchy-flavor/tree.new` as root, then swaps it into `tree`, inside the transaction, so migrations run from the composed tree.
+2. The pacman hook (`/etc/pacman.d/hooks/90-umami.hook`) recomposes stock + recipe into `/var/lib/umami/tree.new` as root, then swaps it into `tree`, inside the transaction, so migrations run from the composed tree.
 3. A stale transform is reported in pacman's output and skipped. A required transform that can't apply leaves the running session alone and points `/etc/omarchy.conf` back at stock for the next boot.
 
 The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it instead of aborting the update, and is registered as a system git `safe.directory` because it is root-owned. Both go away once Omarchy has a flavor mode.
@@ -31,9 +33,9 @@ The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it inst
 ## Dry run
 
 ```bash
-bin/omarchy-flavor plan examples/jobo/recipe.toml          # compose into a scratch dir, show report + changed files
-bin/omarchy-flavor plan examples/jobo/recipe.toml --diff   # with the full diff
-bin/omarchy-flavor compose examples/jobo/recipe.toml --out DIR
+bin/umami plan examples/jobo/recipe.toml          # compose into a scratch dir, show report + changed files
+bin/umami plan examples/jobo/recipe.toml --diff   # with the full diff
+bin/umami compose examples/jobo/recipe.toml --out DIR
 ```
 
 `--source` picks the Omarchy tree to compose onto (default `/usr/share/omarchy`). Nothing outside the destination is written.
@@ -74,7 +76,7 @@ Relative `source` paths resolve against the recipe's directory and cannot leave 
 
 ## Declarative first
 
-A flavor is declarative unless its `[flavor]` table says `code = true`. Declarative transforms are data that omarchy-flavor checks and turns into configuration itself, the way Omarchy treats a theme; nothing in them runs as written:
+A flavor is declarative unless its `[flavor]` table says `code = true`. Declarative transforms are data that umami checks and turns into configuration itself, the way Omarchy treats a theme; nothing in them runs as written:
 
 - `lua.set` on how windows look and are laid out (`general`, `decoration`, `animations`, `dwindle`, `master`, `scrolling`, `group`, `misc`), with plain values
 - `bind.remove`, and `bind.add`/`bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
@@ -94,7 +96,7 @@ section = "left"                                     # optional bar placement
 index = 0
 ```
 
-Plugins from the marketplace never go into the composed tree. A plugin there is first-party, and the shell grants a first-party plugin every capability its manifest declares; as a user plugin it gets none (a `clonedFrom` replacement inherits only what the stock part it replaces has). So `omarchy-flavor user-sync` installs them for each user, as `omarchy plugin add` would. Nothing is installed without the user's yes: at login, plugins they haven't decided on open a terminal with Omarchy's own plugin warning and a Yes/No question (`user-sync --review`), and a no is remembered. Then it checks the URL with `omarchy-git-url-check`, clones the repo, checks out exactly the pinned commit, checks the manifest id, runs `omarchy-plugin-validate`, moves it into `~/.config/omarchy/plugins`, and enables it with the placement on first install. `flavor.lua` runs it at login. Its state file (`~/.local/state/omarchy-flavor/plugins.json`) means a plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what it installed.
+Plugins from the marketplace never go into the composed tree. A plugin there is first-party, and the shell grants a first-party plugin every capability its manifest declares; as a user plugin it gets none (a `clonedFrom` replacement inherits only what the stock part it replaces has). So `umami user-sync` installs them for each user, as `omarchy plugin add` would. Nothing is installed without the user's yes: at login, plugins they haven't decided on open a terminal with Omarchy's own plugin warning and a Yes/No question (`user-sync --review`), and a no is remembered. Then it checks the URL with `omarchy-git-url-check`, clones the repo, checks out exactly the pinned commit, checks the manifest id, runs `omarchy-plugin-validate`, moves it into `~/.config/omarchy/plugins`, and enables it with the placement on first install. `flavor.lua` runs it at login. Its state file (`~/.local/state/umami/plugins.json`) means a plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what it installed.
 
 ## Defaults
 

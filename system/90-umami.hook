@@ -1,4 +1,4 @@
-# Recompose the Omarchy flavor whenever stock Omarchy changes, inside the
+# Recompose the Umami flavor whenever stock Omarchy changes, inside the
 # package transaction, so `omarchy update` runs its migrations from the
 # composed tree.
 [Trigger]
@@ -11,6 +11,6 @@ Target = omarchy-settings
 Target = omarchy-settings-dev
 
 [Action]
-Description = Recomposing the Omarchy flavor...
+Description = Recomposing the Umami flavor...
 When = PostTransaction
-Exec = /usr/lib/omarchy-flavor/bin/omarchy-flavor recompose --hook
+Exec = /usr/lib/umami/bin/umami recompose --hook

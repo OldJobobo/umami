@@ -4,7 +4,7 @@
 # lock screens, all from the Omarchy plugin marketplace (plugins.omarchy.org).
 #
 # The plugins are installed for each user at login, as ordinary user plugins
-# (`omarchy-flavor user-sync`), never into Omarchy's own tree: there a plugin
+# (`umami user-sync`), never into Omarchy's own tree: there a plugin
 # would be first-party and get every capability its manifest asks for. Each
 # is pinned to the commit the marketplace validated, as of 2026-11-16.
 #

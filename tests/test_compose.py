@@ -6,9 +6,9 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from omarchy_flavor import lua
-from omarchy_flavor.compose import Composer
-from omarchy_flavor.recipe import RecipeError, load
+from umami import lua
+from umami.compose import Composer
+from umami.recipe import RecipeError, load
 
 
 def write(path: Path, text: str, mode=None):
@@ -469,7 +469,7 @@ class BuiltinPatchTest(Fixture):
         report, t = self.compose("", code=False)
         builtin = {p["file"]: p["status"] for p in report["builtin"]}
         self.assertEqual(builtin["bin/omarchy-version"], "applied")
-        self.assertIn('$omarchy_path != "/var/lib/omarchy-flavor/tree"', (self.dest / "bin/omarchy-version").read_text())
+        self.assertIn('$omarchy_path != "/var/lib/umami/tree"', (self.dest / "bin/omarchy-version").read_text())
         # Scripts this Omarchy doesn't have, or has changed, are reported, not fatal.
         self.assertEqual(builtin["bin/omarchy-channel-set"], "stale")
         self.assertEqual(report["status"], "ok")
@@ -483,5 +483,5 @@ class BuiltinPatchTest(Fixture):
         # The leaving_dev line is missing from this script; the other two apply.
         self.assertEqual(statuses, ["stale", "applied", "applied"])
         text = (self.dest / "bin/omarchy-channel-set").read_text()
-        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/omarchy-flavor/tree" ]] || omarchy-dev-unlink --no-reboot', text)
-        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/omarchy-flavor/tree" ]] || export OMARCHY_PATH=/usr/share/omarchy', text)
+        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || omarchy-dev-unlink --no-reboot', text)
+        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || export OMARCHY_PATH=/usr/share/omarchy', text)

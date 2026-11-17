@@ -18,7 +18,7 @@
 # installed for each user at login as ordinary user plugins, and are pinned to
 # the commit the marketplace validated, as of 2026-11-16.
 #
-# Zen is declarative: every line is data that omarchy-flavor checks and
+# Zen is declarative: every line is data that umami checks and
 # turns into configuration, and nothing in it runs as written. The plugins
 # are installed only after you say yes, with Omarchy's own warning.
 #

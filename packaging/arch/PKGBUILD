@@ -1,31 +1,31 @@
 # Maintainer: OldJobobo
 #
 # Built from this checkout by ../build (which makes the source tarball).
-pkgname=omarchy-flavor
+pkgname=umami
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Flavors for Omarchy: a recipe of changes recomposed onto stock Omarchy on every update"
 arch=(any)
-url="https://github.com/OldJobobo/omarchy-flavor"
+url="https://github.com/OldJobobo/umami"
 license=(MIT)
 depends=(omarchy python git)
-install=omarchy-flavor.install
+install=umami.install
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=(SKIP)
 
 package() {
   cd "$pkgname-$pkgver"
-  install -Dm755 bin/omarchy-flavor "$pkgdir/usr/lib/omarchy-flavor/bin/omarchy-flavor"
-  install -Dm644 -t "$pkgdir/usr/lib/omarchy-flavor/omarchy_flavor" omarchy_flavor/*.py
+  install -Dm755 bin/umami "$pkgdir/usr/lib/umami/bin/umami"
+  install -Dm644 -t "$pkgdir/usr/lib/umami/umami" umami/*.py
   install -d "$pkgdir/usr/bin"
-  ln -s /usr/lib/omarchy-flavor/bin/omarchy-flavor "$pkgdir/usr/bin/omarchy-flavor"
-  install -Dm644 system/90-omarchy-flavor.hook "$pkgdir/usr/share/libalpm/hooks/90-omarchy-flavor.hook"
+  ln -s /usr/lib/umami/bin/umami "$pkgdir/usr/bin/umami"
+  install -Dm644 system/90-umami.hook "$pkgdir/usr/share/libalpm/hooks/90-umami.hook"
 
   # The shareable flavors. A personal one (examples/jobo) stays out.
   local flavor
   for flavor in zen command-palette mac-switcher; do
-    install -d "$pkgdir/usr/share/omarchy-flavor/flavors/$flavor"
-    cp -r --no-preserve=ownership "examples/$flavor/." "$pkgdir/usr/share/omarchy-flavor/flavors/$flavor/"
+    install -d "$pkgdir/usr/share/umami/flavors/$flavor"
+    cp -r --no-preserve=ownership "examples/$flavor/." "$pkgdir/usr/share/umami/flavors/$flavor/"
   done
-  install -Dm644 README.md "$pkgdir/usr/share/doc/omarchy-flavor/README.md"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/umami/README.md"
 }

@@ -4,7 +4,7 @@ An unofficial add-on for [Omarchy](https://omarchy.org). The Omarchy name is kep
 
 A flavor is a recipe of changes re-applied to whatever the newest Omarchy is. Changes are **transforms** (instructions that target something by meaning and check it still exists), not copies of upstream files, so every upstream update keeps flowing and the flavor rides on top.
 
-Status: prototype. The dry run works, and a flavor runs live: verified in a VM on stock Omarchy 4.5.0 stable (desktop, shell, update, pacman hook, required-transform fallback, uninstall). Also verified from the package (`sudo umami use zen`), and across a real Omarchy version change: a switch from stable 4.5.0 to edge, with the pacman hook recomposing the flavor. Not yet tested across a stable release bump.
+Status: prototype. The dry run works, and a flavor runs live: verified in a VM on stock Omarchy 4.5.0 stable (desktop, shell, update, pacman hook, required-transform fallback, uninstall). Also verified from the package (`sudo umami flavor zen`), and across a real Omarchy version change: a switch from stable 4.5.0 to edge, with the pacman hook recomposing the flavor. Not yet tested across a stable release bump.
 
 ## Install on a machine (prototype)
 

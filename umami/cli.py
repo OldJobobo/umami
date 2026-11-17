@@ -122,9 +122,9 @@ def main(argv=None) -> int:
     recompose.add_argument("--hook", action="store_true", help="called from the pacman hook: exit 0 even when the composition fails")
     recompose.set_defaults(func=lambda args: system.recompose(hook=args.hook))
 
-    use = sub.add_parser("use", help="root: install a flavor (a name, or a directory with recipe.toml), compose and enable it")
-    use.add_argument("flavor")
-    use.set_defaults(func=lambda args: system.use(args.flavor))
+    pick = sub.add_parser("flavor", help="root: install a flavor (a name, or a directory with recipe.toml), compose and enable it")
+    pick.add_argument("flavor")
+    pick.set_defaults(func=lambda args: system.flavor(args.flavor))
 
     user_sync = sub.add_parser("user-sync", help="as your user: install the flavor's plugins (runs at login)")
     user_sync.add_argument("--recipe", default=str(user.TREE_RECIPE), help="recipe to read (default: the composed tree's copy)")

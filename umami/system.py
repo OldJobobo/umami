@@ -98,7 +98,7 @@ def recompose(hook: bool = False) -> int:
     if not RECIPE.is_file():
         if hook:
             return 0  # the package is installed, but no flavor has been picked
-        sys.exit(f"umami: no flavor picked yet ({RECIPE} is missing); try: sudo umami use zen")
+        sys.exit(f"umami: no flavor picked yet ({RECIPE} is missing); try: sudo umami flavor zen")
     STATE.mkdir(parents=True, exist_ok=True)
     new = STATE / "tree.new"
     old = STATE / "tree.old"
@@ -143,7 +143,7 @@ def enable() -> int:
 EXAMPLES = Path("/usr/share/umami/flavors")
 
 
-def use(flavor: str) -> int:
+def flavor(flavor: str) -> int:
     """Install a flavor: a name from the package's flavors, or a recipe
     directory. Copies it to /etc/umami, composes, and enables it."""
     require_root()

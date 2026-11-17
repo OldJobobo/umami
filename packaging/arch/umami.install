@@ -1,5 +1,5 @@
 post_install() {
-  echo "Pick a flavor to start: sudo umami use zen"
+  echo "Pick a flavor to start: sudo umami flavor zen"
   echo "Flavors: /usr/share/umami/flavors (or a directory with your own recipe.toml)"
 }
 

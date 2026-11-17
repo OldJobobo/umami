@@ -115,6 +115,22 @@ class ComposeTest(Fixture):
         module = (self.dest / "default/hypr/flavor.lua").read_text()
         self.assertIn('o.rebind("super+return", "Terminal", { launch = "foot" })', module)
 
+    def test_flavor_lua_loads_before_theme_overrides(self):
+        entry = self.source / "default/hypr/omarchy.lua"
+        entry.write_text(entry.read_text().replace(
+            'require("default.hypr.software-rendering")',
+            'require_optional.module("omarchy.current.theme.hyprland")\nrequire("default.hypr.software-rendering")'))
+        self.compose("""
+            [[transform]]
+            id = "gaps"
+            type = "lua.set"
+            path = "general.gaps_out"
+            value = 4
+        """)
+        lines = (self.dest / "default/hypr/omarchy.lua").read_text().splitlines()
+        self.assertEqual(lines.index('require_optional.module("default.hypr.flavor")') + 1,
+                         lines.index('require_optional.module("omarchy.current.theme.hyprland")'))
+
     def test_bin_symlinks_become_real_files(self):
         self.compose("")
         hello = self.dest / "bin/omarchy-hello"

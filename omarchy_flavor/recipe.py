@@ -1,5 +1,6 @@
 """Load and validate a flavor recipe (TOML)."""
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ REQUIRED_KEYS = {
     "patch": ["file", "anchor"],
     "diff": [],
     "lua.set": ["path", "value"],
+    "lua": [],
     "bind.add": ["keys", "description"],
     "bind.replace": ["keys", "description"],
     "bind.remove": ["keys"],
@@ -44,6 +46,7 @@ class Recipe:
     path: Path
     omarchy: str = ""
     transforms: list = field(default_factory=list)
+    plugins: list = field(default_factory=list)
 
     @property
     def root(self) -> Path:
@@ -87,6 +90,8 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({tid}): {ttype} needs {', '.join(missing)}")
         if ttype in ("bind.add", "bind.replace") and "run" not in raw and "lua" not in raw:
             raise RecipeError(f"{where} ({tid}): {ttype} needs run or lua")
+        if ttype == "lua" and ("code" in raw) == ("source" in raw):
+            raise RecipeError(f"{where} ({tid}): lua needs exactly one of code, source")
         if ttype == "diff":
             sources = raw.get("sources")
             if ("source" in raw) == (sources is not None):
@@ -97,4 +102,23 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({tid}): patch needs exactly one of insert_before, insert_after, replace_with")
         options = {k: v for k, v in raw.items() if k not in ("id", "type", "required")}
         recipe.transforms.append(Transform(tid, ttype, bool(raw.get("required", False)), options))
+    seen_plugins = set()
+    for index, raw in enumerate(data.get("plugin", [])):
+        where = f"plugin #{index + 1}"
+        if not isinstance(raw, dict):
+            raise RecipeError(f"{where}: must be a table")
+        missing = [key for key in ("id", "repo", "commit") if not raw.get(key)]
+        if missing:
+            raise RecipeError(f"{where}: needs {', '.join(missing)}")
+        if not re.fullmatch(r"[0-9a-f]{40}", str(raw["commit"])):
+            raise RecipeError(f"{where} ({raw['id']}): commit must be a full 40-character sha, so the pin is exact")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(raw["id"])):
+            raise RecipeError(f"{where}: bad plugin id {raw['id']!r}")
+        if raw["id"] in seen_plugins:
+            raise RecipeError(f"{where}: duplicate plugin {raw['id']!r}")
+        seen_plugins.add(raw["id"])
+        unknown = set(raw) - {"id", "repo", "commit", "section", "index", "note"}
+        if unknown:
+            raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
+        recipe.plugins.append(dict(raw))
     return recipe

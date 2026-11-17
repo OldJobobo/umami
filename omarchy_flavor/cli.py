@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import system
+from . import system, user
 from .compose import REPORT_DIR, Composer
 from .recipe import RecipeError, load
 
@@ -105,6 +105,11 @@ def main(argv=None) -> int:
     recompose = sub.add_parser("recompose", help="root: compose /etc/omarchy-flavor/recipe.toml onto stock into /var/lib/omarchy-flavor/tree")
     recompose.add_argument("--hook", action="store_true", help="called from the pacman hook: exit 0 even when the composition fails")
     recompose.set_defaults(func=lambda args: system.recompose(hook=args.hook))
+
+    user_sync = sub.add_parser("user-sync", help="as your user: install the flavor's plugins (runs at login)")
+    user_sync.add_argument("--recipe", default=str(user.TREE_RECIPE), help="recipe to read (default: the composed tree's copy)")
+    user_sync.add_argument("--dry-run", action="store_true", help="say what would be installed, change nothing")
+    user_sync.set_defaults(func=lambda args: user.sync(args.recipe, dry_run=args.dry_run))
 
     for name, help_text in (("enable", "root: point Omarchy at the composed tree (after reboot)"),
                             ("disable", "root: point Omarchy back at stock (after reboot)"),

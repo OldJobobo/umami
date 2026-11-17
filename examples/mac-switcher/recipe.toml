@@ -1,0 +1,67 @@
+# Mac switcher: Omarchy for people coming from macOS.
+#
+# A dock, a Spotlight-style launcher, an Alt+Tab app switcher and a choice of
+# lock screens, all from the Omarchy plugin marketplace (plugins.omarchy.org).
+#
+# The plugins are installed for each user at login, as ordinary user plugins
+# (`omarchy-flavor user-sync`), never into Omarchy's own tree: there a plugin
+# would be first-party and get every capability its manifest asks for. Each
+# is pinned to the commit the marketplace validated, as of 2026-11-16.
+#
+# The transforms do what a plugin can't: wire keys to the plugins.
+
+[flavor]
+name = "mac-switcher"
+
+[[plugin]]
+id = "rosakodu.dock"
+repo = "https://github.com/rosakodu/omarchy-dock"
+commit = "bec892a5b3c360c97a28d69d6c27b5c2931f066c"
+note = "An animated application dock along the bottom edge."
+
+[[plugin]]
+id = "io.github.maajix.spotlight"
+repo = "https://github.com/maajix/omarchy-spotlight"
+commit = "c421a257b440af40d4344db0f7b150e3ccabaea8"
+note = "A Spotlight-style launcher: apps, files, calculator, web."
+
+[[plugin]]
+id = "io.github.mtolhuys.fathom"
+repo = "https://github.com/mtolhuys/fathom"
+commit = "98856b78908d35a977a508cf8974b3fa6b4f5a46"
+note = "Alt+Tab through recent windows, most recent first."
+
+[[plugin]]
+id = "io.github.sirjul1337.lock-explorer"
+repo = "https://github.com/SirJul1337/omarchy-lock-explorer"
+commit = "6eaabfa5c385b3899c60ad139033ce2e418296a9"
+note = "Lock screen designs. Replaces omarchy.lock while enabled (clonedFrom)."
+
+# Spotlight takes over the app launcher key, Super+Alt+Space, from the stock
+# Apps grid: on a Mac, Spotlight is how you launch apps. Super+Space stays the
+# Omarchy menu. (Alt+Space, Spotlight's own default, is dictation in stock
+# Omarchy whenever a dictation backend is installed.)
+[[transform]]
+id = "spotlight-key"
+type = "bind.replace"
+keys = "SUPER + ALT + SPACE"
+description = "Spotlight"
+run = "omarchy-shell shell toggle io.github.maajix.spotlight '{}'"
+
+# Alt+Tab goes to Fathom. Fathom ships this snippet: it unbinds Omarchy's
+# Alt+Tab and Alt+Shift+Tab and binds its own, and does nothing for a user
+# who doesn't have Fathom installed and enabled. Its README asks you to paste
+# this block into ~/.config/hypr/bindings.lua; the flavor does it for everyone.
+[[transform]]
+id = "fathom-alt-tab"
+type = "lua"
+code = '''
+do
+  local fathom = os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mtolhuys.fathom/hypr/fathom.lua"
+  local file = io.open(fathom, "r")
+  if file then
+    file:close()
+    pcall(dofile, fathom)
+  end
+end
+'''

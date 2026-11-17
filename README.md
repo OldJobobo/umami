@@ -59,6 +59,7 @@ A transform with `required = true` that ends stale or failed makes the whole com
 | `file.remove` | `path` | |
 | `patch` | `file`, `anchor`, one of `insert_before` / `insert_after` / `replace_with` | Anchor must occur exactly once |
 | `diff` | `source`, or `sources` (tried in order, first that applies wins), `strip`? | A `git diff`, applied all or nothing; one that no longer applies is stale. For carrying an open pull request, with a version per Omarchy line it lands on |
+| `lua` | `code` or `source` (a `.lua` file in the recipe) | Raw Lua for `flavor.lua`, for what has no structured transform, such as a plugin's own binding snippet. Guard anything that can fail |
 | `lua.set` | `path` (`general.gaps_out`), `value` | Emitted as `hl.config` in `default/hypr/flavor.lua` |
 | `bind.add` / `bind.replace` | `keys`, `description`, `run` (command string or table like `{ launch = "foot" }`) or `lua` (raw dispatcher) | `bind.replace` needs the chord bound literally upstream |
 | `bind.remove` | `keys` | |
@@ -70,6 +71,28 @@ A transform with `required = true` that ends stale or failed makes the whole com
 | `shell` | `source` (dir with `shell.qml`) | Whole-shell replacement, same IPC check |
 
 Relative `source` paths resolve against the recipe's directory and cannot leave it.
+
+## Plugins (the user layer)
+
+```toml
+[[plugin]]
+id = "evindor.keystroke"
+repo = "https://github.com/evindor/keystroke"
+commit = "0c74f2dd7466f25faf2cda4a39697f237afbe774"   # full sha: the marketplace's validated commit
+section = "left"                                     # optional bar placement
+index = 0
+```
+
+Plugins from the marketplace never go into the composed tree. A plugin there is first-party, and the shell grants a first-party plugin every capability its manifest declares; as a user plugin it gets none (a `clonedFrom` replacement inherits only what the stock part it replaces has). So `omarchy-flavor user-sync` installs them for each user, as `omarchy plugin add` would: it clones the repo, checks out exactly the pinned commit, checks the manifest id, runs `omarchy-plugin-validate`, moves it into `~/.config/omarchy/plugins`, and enables it with the placement on first install. `flavor.lua` runs it at login. Its state file (`~/.local/state/omarchy-flavor/plugins.json`) means a plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what it installed.
+
+## Examples
+
+| Flavor | Shows |
+| --- | --- |
+| [`examples/zen`](examples/zen/recipe.toml) | Settings, plugin removal, many binding changes, raw Lua from a file, three marketplace plugins |
+| [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Four marketplace plugins wired to keys, one of them replacing the lock screen |
+| [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |
+| [`examples/jobo`](examples/jobo/recipe.toml) | Carrying open pull requests as diffs, a version per Omarchy line |
 
 ## How it composes
 

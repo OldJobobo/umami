@@ -1,0 +1,29 @@
+# Command palette: replace the Omarchy menu with a Raycast-style palette.
+#
+# Keystroke declares `clonedFrom: "omarchy.menu"`. While it is enabled,
+# Omarchy's plugin registry routes everything meant for the stock menu to it:
+# Super+Space, every `omarchy-menu` binding, `omarchy menu summon`, and the
+# menu pickers. Disable or remove it and the stock menu is back. No Omarchy
+# file changes at all, so this flavor has no transforms.
+#
+# Key Promoter shows the keyboard shortcut whenever you reach for the menu
+# for something that has one.
+#
+# Installed for each user at login, pinned to the commit the marketplace
+# (plugins.omarchy.org) validated, as of 2026-11-16.
+
+[flavor]
+name = "command-palette"
+
+[[plugin]]
+id = "evindor.keystroke"
+repo = "https://github.com/evindor/keystroke"
+commit = "0c74f2dd7466f25faf2cda4a39697f237afbe774"
+section = "left"
+index = 0
+note = "Its menu button goes first on the left, where the stock one is."
+
+[[plugin]]
+id = "fkcodes.key-promoter"
+repo = "https://github.com/ForrestKnight/omarchy-key-promoter"
+commit = "21c2b7184a33d800132ac2b6fb66aa31ae70de9a"

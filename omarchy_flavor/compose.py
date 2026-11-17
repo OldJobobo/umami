@@ -23,9 +23,13 @@ from .recipe import Recipe, RecipeError
 REPORT_DIR = ".flavor"
 WRAPPED_DIR = "bin/.flavor"
 FLAVOR_LUA = "default/hypr/flavor.lua"
+USER_SYNC = "/usr/lib/omarchy-flavor/bin/omarchy-flavor user-sync"
 FLAVOR_PLUGINS = "shell/plugins/flavor"
 PRIVILEGED_MARKER = "omarchy_security_require_source_root"
-LUA_HOOK_ANCHOR = 'require("default.hypr.software-rendering")'
+# flavor.lua goes after Omarchy's defaults and before the theme's and the
+# user's overrides: before the theme line where there is one (4.5 and edge),
+# else before software rendering.
+LUA_HOOK_ANCHORS = ('require_optional.module("omarchy.current.theme.hyprland")', 'require("default.hypr.software-rendering")')
 
 
 class Stale(Exception):
@@ -171,6 +175,22 @@ class Composer:
                 r.warnings.append(f"applied {name}")
             return
         raise Stale("no longer applies: " + "; ".join(reasons))
+
+    def t_lua(self, t, r):
+        """Raw Lua for flavor.lua, for what has no structured transform (a
+        plugin's own binding snippet, say). It runs in Hyprland's config
+        after Omarchy's defaults; an error in it would stop the rest of the
+        config, so wrap anything that can fail in pcall."""
+        if "source" in t.options:
+            source = self.recipe.resolve_source(t.get("source"))
+            if not source.is_file():
+                raise RecipeError(f"source not found: {t.get('source')}")
+            code = source.read_text().strip("\n")
+        else:
+            code = str(t.get("code")).strip("\n")
+        if not code:
+            raise RecipeError("lua needs code")
+        self.add_lua(t, "lua", code, r)
 
     def t_lua_set(self, t, r):
         try:
@@ -367,6 +387,13 @@ class Composer:
     # ------------------------------------------------------------------ run
 
     def write_lua(self):
+        if self.recipe.plugins:
+            # The user layer: install the recipe's plugins for whoever logs in.
+            self.lua_chunks.append(
+                "-- [plugins] user layer: install the flavor's plugins for this user\n"
+                'hl.on("hyprland.start", function()\n'
+                f'  hl.exec_cmd("{USER_SYNC}")\n'
+                "end)\n")
         if not self.lua_chunks:
             return
         module = self.dest / FLAVOR_LUA
@@ -375,9 +402,10 @@ class Composer:
         module.write_text(header + "\n".join(self.lua_chunks))
         entry = self.dest / "default/hypr/omarchy.lua"
         text = entry.read_text()
-        if text.count(LUA_HOOK_ANCHOR) == 1 and "require_optional" in text:
-            text = text.replace(LUA_HOOK_ANCHOR, 'require_optional.module("default.hypr.flavor")\n' + LUA_HOOK_ANCHOR)
-            where = "before software-rendering defaults"
+        anchor = next((a for a in LUA_HOOK_ANCHORS if text.count(a) == 1), None)
+        if anchor and "require_optional" in text:
+            text = text.replace(anchor, 'require_optional.module("default.hypr.flavor")\n' + anchor)
+            where = f"before {anchor}"
         else:
             text += '\n-- omarchy-flavor\nrequire("default.hypr.flavor")\n'
             where = "at the end of omarchy.lua (anchor not found)"
@@ -385,7 +413,7 @@ class Composer:
         for result in self.lua_owners:
             if result.status in ("applied", "drift"):
                 result.changed += [FLAVOR_LUA, "default/hypr/omarchy.lua"]
-        if "anchor not found" in where:
+        if "anchor not found" in where and self.lua_owners:
             self.lua_owners[0].warnings.append(f"flavor.lua is loaded {where}")
 
     def run(self) -> dict:

@@ -92,7 +92,16 @@ Plugins from the marketplace never go into the composed tree. A plugin there is 
 theme = "Vantablack"
 ```
 
-Settings that live in each user's own state, applied by `user-sync` once, at the user's first login on the flavor, and again only if the flavor changes the value. A theme the user picks afterwards stays. Only `theme` so far.
+Settings that live in each user's own state, applied by `user-sync` once, at the user's first login on the flavor, and again only if the flavor changes the value. A theme the user picks afterwards stays.
+
+```toml
+[defaults.bar]
+remove = ["omarchy.menu"]                                    # omarchy plugin disable
+move = [{ id = "omarchy.clock", section = "left", index = 0 }]   # omarchy bar move
+set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }] # omarchy bar set
+```
+
+The bar layout works the same way, once, through Omarchy's own commands; a layout the user makes afterwards stays.
 
 ## Examples
 

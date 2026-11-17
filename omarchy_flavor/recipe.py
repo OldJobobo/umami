@@ -127,10 +127,36 @@ def load(path) -> Recipe:
     defaults = data.get("defaults", {})
     if not isinstance(defaults, dict):
         raise RecipeError("[defaults] must be a table")
-    unknown = set(defaults) - {"theme"}
+    unknown = set(defaults) - {"theme", "bar"}
     if unknown:
         raise RecipeError(f"[defaults]: unknown keys {', '.join(sorted(unknown))}")
     if "theme" in defaults and not (isinstance(defaults["theme"], str) and defaults["theme"].strip()):
         raise RecipeError("[defaults] theme must be a theme name")
+    if "bar" in defaults:
+        check_bar_defaults(defaults["bar"])
     recipe.defaults = dict(defaults)
     return recipe
+
+
+BAR_SECTIONS = {"left", "centerBegin", "center", "centerEnd", "tray", "right"}
+
+
+def check_bar_defaults(bar):
+    """[defaults.bar]: widgets to take off the bar, move, and configure."""
+    if not isinstance(bar, dict):
+        raise RecipeError("[defaults.bar] must be a table")
+    unknown = set(bar) - {"remove", "move", "set"}
+    if unknown:
+        raise RecipeError(f"[defaults.bar]: unknown keys {', '.join(sorted(unknown))}")
+    remove = bar.get("remove", [])
+    if not (isinstance(remove, list) and all(isinstance(i, str) and i for i in remove)):
+        raise RecipeError("[defaults.bar] remove must be a list of widget ids")
+    for entry in bar.get("move", []):
+        if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not entry.get("id") \
+                or entry.get("section") not in BAR_SECTIONS:
+            raise RecipeError(f"[defaults.bar] move entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
+        if "index" in entry and not (isinstance(entry["index"], int) and entry["index"] >= 0):
+            raise RecipeError("[defaults.bar] move index must be a whole number")
+    for entry in bar.get("set", []):
+        if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str):
+            raise RecipeError("[defaults.bar] set entries need id, key and a string value")

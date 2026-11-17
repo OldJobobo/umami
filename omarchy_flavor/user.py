@@ -130,7 +130,7 @@ def defaults_file() -> Path:
     return state_file().with_name("defaults.json")
 
 
-def apply_defaults(recipe, dry_run=False) -> list:
+def apply_defaults(recipe, dry_run=False, shell_timeout=60.0) -> list:
     """Apply the recipe's [defaults] once per user, flavor and value.
 
     A default is applied the first time this user logs in on the flavor, and
@@ -154,11 +154,44 @@ def apply_defaults(recipe, dry_run=False) -> list:
             if result.returncode != 0:
                 raise PluginError(f"theme {theme}: " + (result.stderr or result.stdout).strip()[:300])
             mine["theme"] = theme
-            path = defaults_file()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(applied, indent=2, sort_keys=True) + "\n")
+            save_defaults(applied)
             lines.append(f"  set       theme {theme}")
+
+    bar = recipe.defaults.get("bar")
+    if bar and mine.get("bar") != bar:
+        commands = bar_commands(bar)
+        if dry_run:
+            lines += [f"  would run {' '.join(c)}" for c in commands]
+        else:
+            if not wait_for_shell(shell_timeout):
+                raise PluginError("bar layout: the shell is not running (run omarchy-flavor user-sync again)")
+            for command in commands:
+                result = run(command)
+                if result.returncode != 0:
+                    raise PluginError(f"bar layout: {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:300])
+            mine["bar"] = bar
+            save_defaults(applied)
+            lines.append("  set       bar layout")
     return lines
+
+
+def bar_commands(bar: dict) -> list:
+    """Omarchy's own commands for a [defaults.bar] table, in order."""
+    commands = [["omarchy-plugin-disable", wid] for wid in bar.get("remove", [])]
+    for entry in bar.get("move", []):
+        command = ["omarchy-bar", "move", entry["id"], "--section", entry["section"]]
+        if "index" in entry:
+            command += ["--index", str(entry["index"])]
+        commands.append(command)
+    for entry in bar.get("set", []):
+        commands.append(["omarchy-bar", "set", entry["id"], entry["key"], entry["value"]])
+    return commands
+
+
+def save_defaults(applied: dict):
+    path = defaults_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(applied, indent=2, sort_keys=True) + "\n")
 
 
 def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
@@ -215,7 +248,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
             lines.append(f"  FAILED    {pid}: {error}")
 
     try:
-        lines += apply_defaults(recipe, dry_run)
+        lines += apply_defaults(recipe, dry_run, shell_timeout)
     except PluginError as error:
         failed += 1
         lines.append(f"  FAILED    {error}")

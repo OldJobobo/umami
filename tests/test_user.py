@@ -18,6 +18,8 @@ FAKES = {
     "omarchy-shell": 'echo "shell $*" >> "$FAKE_LOG"',
     "notify-send": 'echo "notify $*" >> "$FAKE_LOG"',
     "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"',
+    "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"',
+    "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"',
 }
 
 
@@ -159,6 +161,36 @@ class UserLayerTest(unittest.TestCase):
     def test_dry_run_sets_no_theme(self):
         self.assertEqual(user.sync(self.theme_recipe("Vantablack"), dry_run=True), 0)
         self.assertNotIn("theme", self.log.read_text())
+
+    BAR = textwrap.dedent("""
+        [flavor]
+        name = "test"
+
+        [defaults.bar]
+        remove = ["omarchy.menu"]
+        move = [{ id = "omarchy.clock", section = "left", index = 0 }]
+        set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }]
+    """)
+
+    def test_the_bar_layout_is_set_once_with_omarchys_commands(self):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(self.BAR)
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        calls = self.log.read_text().splitlines()
+        bar = [c for c in calls if c.startswith(("disable", "bar"))]
+        self.assertEqual(bar, ["disable omarchy.menu", "bar move omarchy.clock --section left --index 0",
+                               "bar set omarchy.clock format HH:mm"])
+        self.log.write_text("")
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertNotIn("bar", self.log.read_text())
+
+    def test_bar_sections_are_checked(self):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(self.BAR.replace('section = "left"', 'section = "middle"'))
+        with self.assertRaises(RecipeError):
+            load(path)
 
     def test_defaults_take_only_known_keys(self):
         self.recipe_dir.mkdir(exist_ok=True)

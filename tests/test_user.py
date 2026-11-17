@@ -17,6 +17,7 @@ FAKES = {
     "omarchy-plugin-list": 'echo "[{\\"id\\": \\"acme.dock\\"}]"',
     "omarchy-shell": 'echo "shell $*" >> "$FAKE_LOG"',
     "notify-send": 'echo "notify $*" >> "$FAKE_LOG"',
+    "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"',
 }
 
 
@@ -136,6 +137,35 @@ class UserLayerTest(unittest.TestCase):
         self.assertEqual(self.sync(self.first, dry_run=True), 0)
         self.assertFalse(self.installed.exists())
         self.assertFalse(user.state_file().exists())
+
+    def theme_recipe(self, theme):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(f'[flavor]\nname = "test"\n\n[defaults]\ntheme = "{theme}"\n')
+        return path
+
+    def test_the_default_theme_is_set_once(self):
+        self.assertEqual(user.sync(self.theme_recipe("Vantablack")), 0)
+        self.assertEqual(self.log.read_text().count("theme Vantablack"), 1)
+        # The user picks another theme; the next login leaves it alone.
+        self.assertEqual(user.sync(self.theme_recipe("Vantablack")), 0)
+        self.assertEqual(self.log.read_text().count("theme Vantablack"), 1)
+
+    def test_a_new_default_theme_from_the_flavor_is_set(self):
+        user.sync(self.theme_recipe("Vantablack"))
+        user.sync(self.theme_recipe("Nord"))
+        self.assertIn("theme Nord", self.log.read_text())
+
+    def test_dry_run_sets_no_theme(self):
+        self.assertEqual(user.sync(self.theme_recipe("Vantablack"), dry_run=True), 0)
+        self.assertNotIn("theme", self.log.read_text())
+
+    def test_defaults_take_only_known_keys(self):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text('[flavor]\nname = "test"\n\n[defaults]\nfont = "x"\n')
+        with self.assertRaises(RecipeError):
+            load(path)
 
     def test_the_pin_must_be_a_full_sha(self):
         with self.assertRaises(RecipeError):

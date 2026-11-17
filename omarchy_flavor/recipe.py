@@ -47,6 +47,7 @@ class Recipe:
     omarchy: str = ""
     transforms: list = field(default_factory=list)
     plugins: list = field(default_factory=list)
+    defaults: dict = field(default_factory=dict)
 
     @property
     def root(self) -> Path:
@@ -121,4 +122,15 @@ def load(path) -> Recipe:
         if unknown:
             raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
         recipe.plugins.append(dict(raw))
+
+    # Per-user settings applied once, at a user's first login on the flavor.
+    defaults = data.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise RecipeError("[defaults] must be a table")
+    unknown = set(defaults) - {"theme"}
+    if unknown:
+        raise RecipeError(f"[defaults]: unknown keys {', '.join(sorted(unknown))}")
+    if "theme" in defaults and not (isinstance(defaults["theme"], str) and defaults["theme"].strip()):
+        raise RecipeError("[defaults] theme must be a theme name")
+    recipe.defaults = dict(defaults)
     return recipe

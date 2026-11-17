@@ -1,10 +1,10 @@
 # Zen: a quiet, keyboard-first Omarchy.
 #
-# Less on screen: no animations, blur or shadows, square tight tiles, and a
-# bar without the world clock, weather and AI usage widgets. More from the
-# keyboard: vim keys for windows, and a which-key guide whenever you hold
-# Super. The web-app shortcuts are gone, so Super+Shift
-# is free for moving windows.
+# Less on screen: the Vantablack theme, no animations, blur or shadows,
+# square tight tiles, and a bar without the world clock, weather and AI usage
+# widgets. More from the keyboard: vim keys for windows, and a which-key
+# guide whenever you hold Super. The web-app shortcuts are gone, so
+# Super+Shift is free for moving windows.
 #
 #   Super + H/J/K/L            focus left/down/up/right
 #   Super + Shift + H/J/K/L    swap the window left/down/up/right
@@ -24,6 +24,11 @@
 
 [flavor]
 name = "zen"
+
+# Applied once, at each user's first login on the flavor. Pick another theme
+# afterwards and it stays.
+[defaults]
+theme = "Vantablack"
 
 [[plugin]]
 id = "huacnlee.which-key"

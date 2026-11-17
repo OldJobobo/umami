@@ -126,9 +126,44 @@ def enable(plugin: dict):
         raise PluginError("omarchy-plugin-enable failed: " + (result.stderr or result.stdout).strip()[:300])
 
 
+def defaults_file() -> Path:
+    return state_file().with_name("defaults.json")
+
+
+def apply_defaults(recipe, dry_run=False) -> list:
+    """Apply the recipe's [defaults] once per user, flavor and value.
+
+    A default is applied the first time this user logs in on the flavor, and
+    again only if the flavor changes it. A theme the user picks afterwards is
+    theirs and stays.
+    """
+    try:
+        applied = json.loads(defaults_file().read_text())
+    except (OSError, ValueError):
+        applied = {}
+    if not isinstance(applied, dict):
+        applied = {}
+    mine = applied.setdefault(recipe.name, {})
+    lines = []
+    theme = recipe.defaults.get("theme")
+    if theme and mine.get("theme") != theme:
+        if dry_run:
+            lines.append(f"  would set theme {theme}")
+        else:
+            result = run(["omarchy-theme-set", theme])
+            if result.returncode != 0:
+                raise PluginError(f"theme {theme}: " + (result.stderr or result.stdout).strip()[:300])
+            mine["theme"] = theme
+            path = defaults_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(applied, indent=2, sort_keys=True) + "\n")
+            lines.append(f"  set       theme {theme}")
+    return lines
+
+
 def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
     recipe = load(recipe_path)
-    if not recipe.plugins:
+    if not recipe.plugins and not recipe.defaults:
         return 0
     state = load_state()
     lines, failed, installed = [], 0, []
@@ -179,7 +214,13 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
             failed += 1
             lines.append(f"  FAILED    {pid}: {error}")
 
-    print(f"flavor {recipe.name}: user plugins")
+    try:
+        lines += apply_defaults(recipe, dry_run)
+    except PluginError as error:
+        failed += 1
+        lines.append(f"  FAILED    {error}")
+
+    print(f"flavor {recipe.name}: user layer")
     print("\n".join(lines))
     if (installed or failed) and not dry_run and shutil.which("notify-send"):
         body = (f"Installed or updated: {', '.join(installed)}. " if installed else "") + (f"{failed} failed; run omarchy-flavor user-sync to see why." if failed else "")

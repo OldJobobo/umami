@@ -387,10 +387,10 @@ class Composer:
     # ------------------------------------------------------------------ run
 
     def write_lua(self):
-        if self.recipe.plugins:
-            # The user layer: install the recipe's plugins for whoever logs in.
+        if self.recipe.plugins or self.recipe.defaults:
+            # The user layer: the recipe's plugins and defaults for whoever logs in.
             self.lua_chunks.append(
-                "-- [plugins] user layer: install the flavor's plugins for this user\n"
+                "-- [user] user layer: the flavor's plugins and defaults for this user\n"
                 'hl.on("hyprland.start", function()\n'
                 f'  hl.exec_cmd("{USER_SYNC}")\n'
                 "end)\n")

@@ -85,6 +85,15 @@ index = 0
 
 Plugins from the marketplace never go into the composed tree. A plugin there is first-party, and the shell grants a first-party plugin every capability its manifest declares; as a user plugin it gets none (a `clonedFrom` replacement inherits only what the stock part it replaces has). So `omarchy-flavor user-sync` installs them for each user, as `omarchy plugin add` would: it clones the repo, checks out exactly the pinned commit, checks the manifest id, runs `omarchy-plugin-validate`, moves it into `~/.config/omarchy/plugins`, and enables it with the placement on first install. `flavor.lua` runs it at login. Its state file (`~/.local/state/omarchy-flavor/plugins.json`) means a plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what it installed.
 
+## Defaults
+
+```toml
+[defaults]
+theme = "Vantablack"
+```
+
+Settings that live in each user's own state, applied by `user-sync` once, at the user's first login on the flavor, and again only if the flavor changes the value. A theme the user picks afterwards stays. Only `theme` so far.
+
 ## Examples
 
 | Flavor | Shows |

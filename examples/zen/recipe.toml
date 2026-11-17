@@ -38,8 +38,9 @@ theme = "Vantablack"
 # (Super+Space) and the keyboard layout (Super+I) are taken off. The Audio,
 # Network, Bluetooth, Display and Power panels open from their bar icon, so
 # Super+Ctrl+A/N/B/D/P need them: they go in Pocket, and their panels still
-# open from there. So do the tray, the update notice and which-key's icon,
-# which holds its Enabled switch.
+# open from there. So do the tray and which-key's icon, which holds its
+# Enabled switch. The update notice stays out, where stock puts it beside the
+# workspaces: it only shows when updates are ready, and that should be seen.
 #
 # Applied once, through Omarchy's own `omarchy plugin disable` and
 # `omarchy bar move/set`, so a layout you make afterwards stays. Pocket
@@ -50,12 +51,11 @@ move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
   { id = "omarchy.indicators", section = "left", index = 1 },
-  { id = "omarchy.system-update", section = "right", index = 0 },
   { id = "jrmmhm.pocket", section = "right", index = 99 },
 ]
 set = [
   { id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" },
-  { id = "jrmmhm.pocket", key = "members", value = "omarchy.system-update,omarchy.tray,huacnlee.which-key,omarchy.bluetooth,omarchy.network,omarchy.audio,omarchy.monitor,omarchy.power" },
+  { id = "jrmmhm.pocket", key = "members", value = "omarchy.tray,huacnlee.which-key,omarchy.bluetooth,omarchy.network,omarchy.audio,omarchy.monitor,omarchy.power" },
 ]
 
 [[plugin]]

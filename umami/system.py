@@ -146,13 +146,14 @@ def recompose(hook: bool = False) -> int:
     return 0
 
 
-def enable() -> int:
+def enable(quiet: bool = False) -> int:
     require_root()
     if not TREE.is_dir():
         sys.exit("umami: no composed tree yet (run recompose first)")
     git_safe_directory()
     point_at(TREE)
-    print(f"Omarchy will run from {TREE} after the next reboot.")
+    if not quiet:
+        print(f"Omarchy will run from {TREE} after the next reboot.")
     return 0
 
 
@@ -194,10 +195,11 @@ def flavor(flavor: str) -> int:
     code = recompose()
     if code != 0:
         return code
-    enable()
+    enable(quiet=bool(live))
     if live and switch_live(*live):
         print(f"Switched live for {live[0]}: Hyprland and the shell reload now, without a reboot.")
     else:
+        print(f"Omarchy will run from {TREE} after the next reboot.")
         print("Reboot to start running the flavor.")
     return 0
 

@@ -40,7 +40,7 @@ move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
 ]
-set = [{ id = "omarchy.clock", key = "format", value = "d MMM  HH:mm" }]
+set = [{ id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" }]
 
 [[plugin]]
 id = "huacnlee.which-key"

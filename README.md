@@ -117,6 +117,10 @@ The bar layout works the same way, once, through Omarchy's own commands; a layou
 - The source tree is copied with real files (`cp -rL --reflink=auto`): the package's `bin/` is symlinks into `/usr/bin`, and Omarchy's privileged commands refuse to run unless they resolve to `$OMARCHY_PATH/bin/<name>`.
 - Hyprland transforms become one generated module, `default/hypr/flavor.lua`, loaded from `default/hypr/omarchy.lua` after Omarchy's defaults and before `~/.config/hypr` overrides. It calls the same APIs Omarchy does (`hl.config`, `o.rebind`, `hl.unbind`).
 
+## Possible future direction
+
+[Flavors as a reproducible environment layer](docs/future-machine-setups.md) sketches how a machine provisioner could use a pinned flavor to recreate a setup. This is exploratory, not implemented or committed scope.
+
 ## Tests
 
 ```bash

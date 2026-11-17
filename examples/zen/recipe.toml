@@ -30,19 +30,33 @@ name = "zen"
 [defaults]
 theme = "Vantablack"
 
-# The bar: no menu button (Super+Space opens the menu), the time and date
-# small on the left with the status indicators after them, the workspaces
-# in the middle. Applied once too, through
-# Omarchy's own `omarchy plugin disable` and `omarchy bar move/set`, so a
-# layout you make afterwards stays.
+# The bar: the time and date small on the left with the status indicators
+# after them, the workspaces in the middle, and on the right only Pocket's
+# mark, with everything else behind it. Point at the mark to bring them out.
+#
+# A widget goes only where its shortcut works without it. The menu button
+# (Super+Space) and the keyboard layout (Super+I) are taken off. The Audio,
+# Network, Bluetooth, Display and Power panels open from their bar icon, so
+# Super+Ctrl+A/N/B/D/P need them: they go in Pocket, and their panels still
+# open from there. So do the tray, the update notice and which-key's icon,
+# which holds its Enabled switch.
+#
+# Applied once, through Omarchy's own `omarchy plugin disable` and
+# `omarchy bar move/set`, so a layout you make afterwards stays. Pocket
+# holds the run of widgets just left of its mark, so it goes last.
 [defaults.bar]
-remove = ["omarchy.menu"]
+remove = ["omarchy.menu", "omarchy.keyboard-layout"]
 move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
   { id = "omarchy.indicators", section = "left", index = 1 },
+  { id = "omarchy.system-update", section = "right", index = 0 },
+  { id = "jrmmhm.pocket", section = "right", index = 99 },
 ]
-set = [{ id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" }]
+set = [
+  { id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" },
+  { id = "jrmmhm.pocket", key = "members", value = "omarchy.system-update,omarchy.tray,huacnlee.which-key,omarchy.bluetooth,omarchy.network,omarchy.audio,omarchy.monitor,omarchy.power" },
+]
 
 [[plugin]]
 id = "huacnlee.which-key"
@@ -54,7 +68,7 @@ note = "Hold Super for a guide to the bindings you can press next."
 id = "jrmmhm.pocket"
 repo = "https://github.com/jrmmhm/omarchy-pocket"
 commit = "3002564dc4c57b52958a6fff9dcae006f138cb57"
-note = "Tucks bar widgets you rarely use behind one mark."
+note = "Holds the right side of the bar behind one mark (see [defaults.bar])."
 
 # ------------------------------------------------------------------ quiet
 

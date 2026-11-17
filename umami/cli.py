@@ -18,8 +18,16 @@ DEFAULT_SOURCE = "/usr/share/omarchy"
 MARK = {"applied": "ok   ", "drift": "DRIFT", "stale": "STALE", "failed": "FAIL "}
 
 
+def note_package(report: dict, source: str):
+    """Composed onto the installed Omarchy, name its package: the tree's own
+    version file is not bumped per release (4.0.0.alpha on every edge build)."""
+    if Path(source).resolve() == Path(DEFAULT_SOURCE).resolve():
+        report["package"] = report.get("package") or system.package_version()
+
+
 def print_report(report: dict):
-    print(f"flavor {report['flavor']} on Omarchy {report['source_version'] or '?'} ({report['source']})")
+    base = report.get("package") or f"Omarchy {report['source_version'] or '?'}"
+    print(f"flavor {report['flavor']} on {base} ({report['source']})")
     code = report.get("code") or []
     print(f"tier: code, trusted like a package ({len(code)} transforms run code)" if code
           else "tier: declarative (nothing in it runs as written)")
@@ -69,6 +77,7 @@ def cmd_plan(args) -> int:
     with tempfile.TemporaryDirectory(prefix="umami-plan-") as scratch:
         dest = Path(scratch) / "tree"
         report = Composer(recipe, Path(args.source), dest).run()
+        note_package(report, args.source)
         print_report(report)
         changes = diff(Path(args.source).resolve(), dest, args.diff)
         print("\nchanges against stock:" if changes else "\nno changes against stock")
@@ -83,6 +92,7 @@ def cmd_plan(args) -> int:
 def cmd_compose(args) -> int:
     recipe = load(args.recipe)
     report = Composer(recipe, Path(args.source), Path(args.out)).run()
+    note_package(report, args.source)
     if args.json:
         print(json.dumps(report, indent=2))
     else:

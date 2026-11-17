@@ -89,7 +89,7 @@ Plugins from the marketplace never go into the composed tree. A plugin there is 
 
 | Flavor | Shows |
 | --- | --- |
-| [`examples/zen`](examples/zen/recipe.toml) | Settings, plugin removal, many binding changes, raw Lua from a file, three marketplace plugins |
+| [`examples/zen`](examples/zen/recipe.toml) | Settings, plugin removal, many binding changes, raw Lua, two marketplace plugins |
 | [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Four marketplace plugins wired to keys, one of them replacing the lock screen |
 | [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |
 | [`examples/jobo`](examples/jobo/recipe.toml) | Carrying open pull requests as diffs, a version per Omarchy line |

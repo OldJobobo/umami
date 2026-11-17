@@ -131,6 +131,28 @@ class ComposeTest(Fixture):
         self.assertEqual(lines.index('require_optional.module("default.hypr.flavor")') + 1,
                          lines.index('require_optional.module("omarchy.current.theme.hyprland")'))
 
+    def test_lua_code_inline_and_from_a_file(self):
+        write(self.recipe_dir / "extra.lua", "hl.unbind(\"SUPER + Q\")\n")
+        report, t = self.compose("""
+            [[transform]]
+            id = "inline"
+            type = "lua"
+            code = 'hl.unbind("SUPER + X")'
+
+            [[transform]]
+            id = "file"
+            type = "lua"
+            source = "extra.lua"
+        """)
+        self.assertEqual(report["status"], "ok")
+        module = (self.dest / "default/hypr/flavor.lua").read_text()
+        self.assertLess(module.index('hl.unbind("SUPER + X")'), module.index('hl.unbind("SUPER + Q")'))
+
+    def test_lua_needs_exactly_one_of_code_and_source(self):
+        for body in ('id = "x"\ntype = "lua"', 'id = "x"\ntype = "lua"\ncode = "a()"\nsource = "a.lua"'):
+            with self.assertRaises(RecipeError):
+                self.recipe("[[transform]]\n" + body + "\n")
+
     def test_bin_symlinks_become_real_files(self):
         self.compose("")
         hello = self.dest / "bin/omarchy-hello"

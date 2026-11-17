@@ -2,13 +2,12 @@
 #
 # Less on screen: no animations, blur or shadows, square tight tiles, and a
 # bar without the world clock, weather and AI usage widgets. More from the
-# keyboard: vim keys for windows, Vimarchy's window hints, and a which-key
-# guide whenever you hold Super. The web-app shortcuts are gone, so Super+Shift
+# keyboard: vim keys for windows, and a which-key guide whenever you hold
+# Super. The web-app shortcuts are gone, so Super+Shift
 # is free for moving windows.
 #
 #   Super + H/J/K/L            focus left/down/up/right
 #   Super + Shift + H/J/K/L    swap the window left/down/up/right
-#   Super + '                  Vimarchy: a hint on every window, type it to jump
 #   hold Super                 which-key: every binding you can press next
 #   Super + ;                  toggle split        (was Super + J)
 #   Super + Backslash          cycle layout        (was Super + L)
@@ -31,12 +30,6 @@ id = "huacnlee.which-key"
 repo = "https://github.com/huacnlee/omarchy-which-key"
 commit = "a80451064fb1f354cb86ecad0a3d610218e75bd5"
 note = "Hold Super for a guide to the bindings you can press next."
-
-[[plugin]]
-id = "vimarchy"
-repo = "https://github.com/clickety-clacks/vimarchy"
-commit = "30601976903821a82097ab568f10aae56564c32f"
-note = "Vimium-style hints over every window."
 
 [[plugin]]
 id = "jrmmhm.pocket"
@@ -193,11 +186,6 @@ type = "bind.replace"
 keys = "SUPER + SHIFT + SLASH"
 description = "Keybindings"
 run = "omarchy-menu-keybindings"
-
-[[transform]]
-id = "vimarchy-keys"
-type = "lua"
-source = "vimarchy.lua"
 
 # --------------------------------------------- no web-app shortcuts
 

@@ -20,6 +20,9 @@ MARK = {"applied": "ok   ", "drift": "DRIFT", "stale": "STALE", "failed": "FAIL 
 
 def print_report(report: dict):
     print(f"flavor {report['flavor']} on Omarchy {report['source_version'] or '?'} ({report['source']})")
+    code = report.get("code") or []
+    print(f"tier: code, trusted like a package ({len(code)} transforms run code)" if code
+          else "tier: declarative (nothing in it runs as written)")
     for t in report["transforms"]:
         print(f"  {MARK[t['status']]} {t['id']:<24} {t['type']}" + (" (required)" if t["required"] else ""))
         if t["detail"]:
@@ -109,7 +112,11 @@ def main(argv=None) -> int:
     user_sync = sub.add_parser("user-sync", help="as your user: install the flavor's plugins (runs at login)")
     user_sync.add_argument("--recipe", default=str(user.TREE_RECIPE), help="recipe to read (default: the composed tree's copy)")
     user_sync.add_argument("--dry-run", action="store_true", help="say what would be installed, change nothing")
-    user_sync.set_defaults(func=lambda args: user.sync(args.recipe, dry_run=args.dry_run))
+    user_sync.add_argument("--review", action="store_true",
+                           help="ask about plugins you haven't said yes or no to (opened for you at login)")
+    user_sync.add_argument("--yes", action="store_true", help="say yes to those plugins without asking")
+    user_sync.set_defaults(func=lambda args: user.sync(args.recipe, dry_run=args.dry_run,
+                                                       interactive=args.review, assume_yes=args.yes))
 
     for name, help_text in (("enable", "root: point Omarchy at the composed tree (after reboot)"),
                             ("disable", "root: point Omarchy back at stock (after reboot)"),

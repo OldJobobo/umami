@@ -5,6 +5,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import tiers
+
 # Transform type -> keys it requires (beyond id/type/required).
 REQUIRED_KEYS = {
     "file.add": ["path", "source"],
@@ -48,6 +50,8 @@ class Recipe:
     transforms: list = field(default_factory=list)
     plugins: list = field(default_factory=list)
     defaults: dict = field(default_factory=dict)
+    code: bool = False
+    code_transforms: list = field(default_factory=list)
 
     @property
     def root(self) -> Path:
@@ -89,8 +93,14 @@ def load(path) -> Recipe:
         missing = [key for key in REQUIRED_KEYS[ttype] if key not in raw]
         if missing:
             raise RecipeError(f"{where} ({tid}): {ttype} needs {', '.join(missing)}")
-        if ttype in ("bind.add", "bind.replace") and "run" not in raw and "lua" not in raw:
-            raise RecipeError(f"{where} ({tid}): {ttype} needs run or lua")
+        if ttype in ("bind.add", "bind.replace"):
+            if sum(k in raw for k in ("action", "run", "lua")) != 1:
+                raise RecipeError(f"{where} ({tid}): {ttype} needs exactly one of action, run, lua")
+            if "action" in raw:
+                try:
+                    tiers.check_action(raw["action"])
+                except ValueError as error:
+                    raise RecipeError(f"{where} ({tid}): {error}") from error
         if ttype == "lua" and ("code" in raw) == ("source" in raw):
             raise RecipeError(f"{where} ({tid}): lua needs exactly one of code, source")
         if ttype == "diff":
@@ -103,6 +113,19 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({tid}): patch needs exactly one of insert_before, insert_after, replace_with")
         options = {k: v for k, v in raw.items() if k not in ("id", "type", "required")}
         recipe.transforms.append(Transform(tid, ttype, bool(raw.get("required", False)), options))
+        reason = tiers.code_reason(ttype, options)
+        if reason:
+            recipe.code_transforms.append((tid, reason))
+
+    # Declarative unless the recipe says otherwise (see tiers.py).
+    code = meta.get("code", False)
+    if not isinstance(code, bool):
+        raise RecipeError("[flavor] code must be true or false")
+    recipe.code = code
+    if recipe.code_transforms and not code:
+        listed = "; ".join(f"{tid} {reason}" for tid, reason in recipe.code_transforms)
+        raise RecipeError(f"these transforms run code: {listed}. A flavor that runs code is trusted like a "
+                          "package; add code = true to [flavor] to allow it")
     seen_plugins = set()
     for index, raw in enumerate(data.get("plugin", [])):
         where = f"plugin #{index + 1}"

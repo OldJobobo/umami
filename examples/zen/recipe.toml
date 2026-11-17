@@ -18,6 +18,10 @@
 # installed for each user at login as ordinary user plugins, and are pinned to
 # the commit the marketplace validated, as of 2026-11-16.
 #
+# Zen is declarative: every line is data that omarchy-flavor checks and
+# turns into configuration, and nothing in it runs as written. The plugins
+# are installed only after you say yes, with Omarchy's own warning.
+#
 # One step is yours: which-key hooks into Hyprland by adding a marked block to
 # your own ~/.config/hypr/bindings.lua, so the flavor leaves that to you. Open
 # the Which Key widget's settings in the bar and turn on Enabled.
@@ -125,11 +129,11 @@ type = "bind.remove"
 keys = "SUPER + CTRL + ALT + E"
 
 # The Agents panel key exists on edge and the next releases, not on 4.5.
-# hl.unbind does nothing where the key isn't bound.
 [[transform]]
 id = "no-agents-key"
-type = "lua"
-code = 'hl.unbind("SUPER + CTRL + X")'
+type = "bind.remove"
+keys = "SUPER + CTRL + X"
+optional = true
 
 # ------------------------------------------------------------ vim windows
 
@@ -138,7 +142,7 @@ id = "focus-left"
 type = "bind.add"
 keys = "SUPER + H"
 description = "Focus left"
-lua = 'hl.dsp.focus({ direction = "l" })'
+action = { focus = "l" }
 
 
 [[transform]]
@@ -146,7 +150,7 @@ id = "focus-down"
 type = "bind.replace"
 keys = "SUPER + J"
 description = "Focus down"
-lua = 'hl.dsp.focus({ direction = "d" })'
+action = { focus = "d" }
 
 
 [[transform]]
@@ -154,7 +158,7 @@ id = "focus-up"
 type = "bind.replace"
 keys = "SUPER + K"
 description = "Focus up"
-lua = 'hl.dsp.focus({ direction = "u" })'
+action = { focus = "u" }
 
 
 [[transform]]
@@ -162,7 +166,7 @@ id = "focus-right"
 type = "bind.replace"
 keys = "SUPER + L"
 description = "Focus right"
-lua = 'hl.dsp.focus({ direction = "r" })'
+action = { focus = "r" }
 
 
 [[transform]]
@@ -170,7 +174,7 @@ id = "swap-left"
 type = "bind.add"
 keys = "SUPER + SHIFT + H"
 description = "Swap window left"
-lua = 'hl.dsp.window.swap({ direction = "l" })'
+action = { swap = "l" }
 
 
 [[transform]]
@@ -178,7 +182,7 @@ id = "swap-down"
 type = "bind.add"
 keys = "SUPER + SHIFT + J"
 description = "Swap window down"
-lua = 'hl.dsp.window.swap({ direction = "d" })'
+action = { swap = "d" }
 
 
 [[transform]]
@@ -186,7 +190,7 @@ id = "swap-up"
 type = "bind.add"
 keys = "SUPER + SHIFT + K"
 description = "Swap window up"
-lua = 'hl.dsp.window.swap({ direction = "u" })'
+action = { swap = "u" }
 
 
 [[transform]]
@@ -194,7 +198,7 @@ id = "swap-right"
 type = "bind.add"
 keys = "SUPER + SHIFT + L"
 description = "Swap window right"
-lua = 'hl.dsp.window.swap({ direction = "r" })'
+action = { swap = "r" }
 
 
 # What the vim keys displaced.
@@ -203,14 +207,14 @@ id = "toggle-split-key"
 type = "bind.add"
 keys = "SUPER + SEMICOLON"
 description = "Toggle window split"
-lua = 'hl.dsp.layout("togglesplit")'
+action = { layout = "togglesplit" }
 
 [[transform]]
 id = "cycle-layout-key"
 type = "bind.add"
 keys = "SUPER + BACKSLASH"
 description = "Cycle workspace layout"
-run = "omarchy-hyprland-workspace-layout-toggle"
+action = { omarchy = "omarchy-hyprland-workspace-layout-toggle" }
 
 # Super+? (Shift+Slash) was 1Password, one of the web-app shortcuts below.
 [[transform]]
@@ -218,7 +222,7 @@ id = "keybindings-key"
 type = "bind.replace"
 keys = "SUPER + SHIFT + SLASH"
 description = "Keybindings"
-run = "omarchy-menu-keybindings"
+action = { omarchy = "omarchy-menu-keybindings" }
 
 # --------------------------------------------- no web-app shortcuts
 

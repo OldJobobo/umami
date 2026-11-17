@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ipc, lua
+from . import ipc, lua, tiers
 from .recipe import Recipe, RecipeError
 
 REPORT_DIR = ".flavor"
@@ -205,6 +205,13 @@ class Composer:
         self.add_lua(t, f"lua.set {t.get('path')}", chunk, r)
 
     def _dispatcher(self, t) -> str:
+        if "action" in t.options:
+            action = t.get("action")
+            if "omarchy" in action:
+                command = action["omarchy"].split()[0]
+                if not (self.dest / "bin" / command).is_file():
+                    raise Stale(f"{command} is not an Omarchy command here")
+            return tiers.action_lua(action)
         if "lua" in t.options:
             return t.get("lua")
         return lua.literal(t.get("run"))
@@ -227,7 +234,10 @@ class Composer:
     def t_bind_remove(self, t, r):
         keys = t.get("keys")
         if lua.normalize_keys(keys) not in lua.literal_bindings(self.dest / "default/hypr"):
-            raise Stale(f"{keys} is no longer bound in Omarchy's defaults")
+            if not t.get("optional", False):
+                raise Stale(f"{keys} is no longer bound in Omarchy's defaults")
+            # Bound only on some Omarchy versions; hl.unbind of a free key does nothing.
+            r.warnings.append(f"{keys} is not bound in this Omarchy; unbinding it anyway")
         self.add_lua(t, f"bind.remove {keys}", f"hl.unbind({lua.literal(keys)})", r)
 
     def add_lua(self, t, label, chunk, r):
@@ -316,6 +326,14 @@ class Composer:
         if absent:
             r.status = "drift"
             r.warnings.append(f"no longer upstream (skipped): {', '.join(absent)}")
+        if not self.recipe.code:
+            for pid in ids:
+                if pid in absent:
+                    continue
+                kinds = set(json.loads(manifests[pid].read_text()).get("kinds") or [])
+                if kinds - tiers.REMOVABLE_KINDS:
+                    raise RecipeError(f"{pid} is a {', '.join(sorted(kinds - tiers.REMOVABLE_KINDS))}; removing it "
+                                      "runs without part of Omarchy, so it needs code = true in [flavor]")
         for pid in ids:
             if pid in absent:
                 continue
@@ -445,6 +463,7 @@ class Composer:
         version = self.source / "version"
         report = {
             "flavor": self.recipe.name,
+            "code": [f"{tid}: {reason}" for tid, reason in self.recipe.code_transforms],
             "recipe": str(self.recipe.path),
             "source": str(self.source),
             "source_version": version.read_text().strip() if version.is_file() else "",

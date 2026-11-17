@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,8 @@ FAKES = {
     "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"',
     "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"',
     "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"',
+    "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
+    "omarchy-launch-floating-terminal-with-presentation": 'echo "review $*" >> "$FAKE_LOG"',
 }
 
 
@@ -84,6 +87,7 @@ class UserLayerTest(unittest.TestCase):
         return path
 
     def sync(self, commit, **kwargs):
+        kwargs.setdefault("assume_yes", True)
         return user.sync(self.recipe(commit), shell_timeout=1, **kwargs)
 
     @property
@@ -198,6 +202,63 @@ class UserLayerTest(unittest.TestCase):
         path.write_text('[flavor]\nname = "test"\n\n[defaults]\nfont = "x"\n')
         with self.assertRaises(RecipeError):
             load(path)
+
+    # ------------------------------------------------------------ consent
+
+    def test_at_login_an_undecided_plugin_waits_for_the_users_ok(self):
+        self.assertEqual(self.sync(self.first, assume_yes=False), 0)
+        self.assertFalse(self.installed.exists())
+        for _ in range(100):  # the terminal is launched detached
+            if "review" in self.log.read_text():
+                break
+            time.sleep(0.02)
+        self.assertIn("review /usr/lib/omarchy-flavor/bin/omarchy-flavor user-sync --review", self.log.read_text())
+        self.assertNotIn("enable", self.log.read_text())
+
+    def test_saying_no_keeps_the_plugin_away(self):
+        original = user.ask
+        user.ask = lambda recipe, pending: False
+        try:
+            self.assertEqual(self.sync(self.first, assume_yes=False, interactive=True), 0)
+        finally:
+            user.ask = original
+        self.assertFalse(self.installed.exists())
+        self.log.write_text("")
+        self.assertEqual(self.sync(self.second, assume_yes=False), 0)  # a later login, a new pin
+        self.assertFalse(self.installed.exists())
+        self.assertNotIn("review", self.log.read_text())
+
+    def test_saying_yes_installs_it(self):
+        asked = []
+        original = user.ask
+        user.ask = lambda recipe, pending: asked.append([p["id"] for p in pending]) or True
+        try:
+            self.assertEqual(self.sync(self.first, assume_yes=False, interactive=True), 0)
+        finally:
+            user.ask = original
+        self.assertEqual(asked, [["acme.dock"]])
+        self.assertTrue(self.installed.exists())
+
+    def test_the_url_is_checked_before_cloning(self):
+        evil = Path(self.tmp.name) / "evil-dock"
+        subprocess.run(["cp", "-r", str(self.repo), str(evil)], check=True)
+        path = self.recipe(self.first)
+        path.write_text(path.read_text().replace(str(self.repo), str(evil)))
+        self.assertEqual(user.sync(path, shell_timeout=1, assume_yes=True), 1)
+        self.assertFalse(self.installed.exists())
+        self.assertIn("urlcheck", self.log.read_text())
+
+    def test_the_bar_layout_waits_for_the_plugins_it_places(self):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(self.recipe(self.first).read_text() + textwrap.dedent("""
+            [defaults.bar]
+            move = [{ id = "acme.dock", section = "right", index = 99 }]
+        """))
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertNotIn("bar move", self.log.read_text())
+        self.assertEqual(user.sync(path, shell_timeout=1, assume_yes=True), 0)
+        self.assertIn("bar move acme.dock --section right --index 99", self.log.read_text())
 
     def test_the_pin_must_be_a_full_sha(self):
         with self.assertRaises(RecipeError):

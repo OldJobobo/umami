@@ -9,9 +9,16 @@ add` installs them, through Omarchy's own validation and enable commands,
 pinned to the commit the recipe names (for marketplace plugins, the commit
 the marketplace validated).
 
-The state file records what this layer installed. A plugin the user removed
-stays removed, one the user installed themselves is left alone, and only a
-plugin installed here follows a new pin.
+Nothing third-party is installed without the user's yes. At login a plugin
+the user hasn't decided on opens a terminal that shows Omarchy's own warning
+and asks (`user-sync --review`); until then it is not installed. The repo URL
+goes through `omarchy-git-url-check` before anything is cloned, as for
+`omarchy plugin add`.
+
+The state file records what this layer installed and what the user turned
+down. A plugin the user removed or declined stays away, one the user
+installed themselves is left alone, and only a plugin installed here follows
+a new pin.
 """
 
 import json
@@ -26,6 +33,13 @@ from pathlib import Path
 from .recipe import load
 
 TREE_RECIPE = Path("/var/lib/omarchy-flavor/tree/.flavor/recipe.toml")
+SELF = "/usr/lib/omarchy-flavor/bin/omarchy-flavor"
+
+# Omarchy's own words from omarchy plugin add.
+WARNING = """\
+Plugins run as arbitrary, unsandboxed code inside your long-lived
+omarchy-shell process. Only add repos you trust, and review the code
+before you enable it."""
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -73,6 +87,14 @@ def fetch(plugin: dict) -> Path:
     stage = Path(tempfile.mkdtemp(prefix=f"{plugin['id']}.", dir=cache_dir()))
     try:
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        # As omarchy plugin add does: refuse a URL that names a git option or
+        # a transport helper before cloning. No checker means no clone.
+        try:
+            check = run(["omarchy-git-url-check", plugin["repo"]])
+        except FileNotFoundError as error:
+            raise PluginError("omarchy-git-url-check is missing, so the URL can't be checked") from error
+        if check.returncode != 0:
+            raise PluginError("omarchy-git-url-check refused the URL: " + (check.stderr or check.stdout).strip()[:300])
         clone = run(["git", "clone", "-q", "--no-checkout", "--", plugin["repo"], str(stage)], env=env)
         if clone.returncode != 0:
             raise PluginError(f"cannot clone {plugin['repo']}: {clone.stderr.strip()}")
@@ -130,7 +152,7 @@ def defaults_file() -> Path:
     return state_file().with_name("defaults.json")
 
 
-def apply_defaults(recipe, dry_run=False, shell_timeout=60.0) -> list:
+def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
     """Apply the recipe's [defaults] once per user, flavor and value.
 
     A default is applied the first time this user logs in on the flavor, and
@@ -158,8 +180,13 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0) -> list:
             lines.append(f"  set       theme {theme}")
 
     bar = recipe.defaults.get("bar")
-    if bar and mine.get("bar") != bar:
-        commands = bar_commands(bar)
+    if bar and mine.get("bar") != bar and waiting:
+        # The layout can place the flavor's plugins; wait until they're decided.
+        lines.append("  waiting   bar layout, until the plugins are decided")
+    elif bar and mine.get("bar") != bar:
+        # Leave out the parts about a flavor plugin that isn't installed.
+        absent = set() if dry_run else {p["id"] for p in recipe.plugins if not (plugins_dir() / p["id"]).exists()}
+        commands = [c for c in bar_commands(bar) if not set(c) & absent]
         if dry_run:
             lines += [f"  would run {' '.join(c)}" for c in commands]
         else:
@@ -194,7 +221,41 @@ def save_defaults(applied: dict):
     path.write_text(json.dumps(applied, indent=2, sort_keys=True) + "\n")
 
 
-def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
+def ask(recipe, pending: list) -> bool:
+    """Show Omarchy's plugin warning and the plugins, and ask once for all."""
+    print(f"The {recipe.name} flavor adds these plugins from the Omarchy marketplace:\n")
+    for plugin in pending:
+        print(f"  {plugin['id']}")
+        if plugin.get("note"):
+            print(f"      {plugin['note']}")
+        print(f"      {plugin['repo']} @ {plugin['commit'][:12]}\n")
+    print("⚠️  " + WARNING.replace("\n", "\n  ") + "\n")
+    prompt = f"Add {'this plugin' if len(pending) == 1 else 'these plugins'}?"
+    if shutil.which("gum") and os.isatty(0):
+        return run_tty(["gum", "confirm", "--default=false", prompt]) == 0
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def run_tty(command) -> int:
+    return subprocess.run(command).returncode
+
+
+def open_review():
+    """At login: open a terminal that asks about the undecided plugins."""
+    launcher = "omarchy-launch-floating-terminal-with-presentation"
+    if shutil.which(launcher):
+        # Detached: the terminal stays up until the user answers, and the
+        # rest of this sync (the theme, say) shouldn't wait for that.
+        subprocess.Popen([launcher, f"{SELF} user-sync --review"], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    return False
+
+
+def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive=False, assume_yes=False) -> int:
     recipe = load(recipe_path)
     if not recipe.plugins and not recipe.defaults:
         return 0
@@ -202,11 +263,32 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
     lines, failed, installed = [], 0, []
     shell_ready = None
 
+    # The plugins nobody has said yes or no to yet.
+    pending = [p for p in recipe.plugins if not state.get(p["id"])
+               and not ((plugins_dir() / p["id"]).exists() or (plugins_dir() / p["id"]).is_symlink())]
+    deferred = set()
+    if pending and not dry_run and not assume_yes:
+        if interactive:
+            if not ask(recipe, pending):
+                for plugin in pending:
+                    state[plugin["id"]] = {"declined": True, "flavor": recipe.name}
+                save_state(state)
+        else:
+            deferred = {p["id"] for p in pending}
+            opened = open_review()
+            lines.append("  waiting   for your OK: " + ", ".join(sorted(deferred))
+                         + ("" if opened else f" (run {SELF} user-sync --review)"))
+
     for plugin in recipe.plugins:
         pid = plugin["id"]
         target = plugins_dir() / pid
         known = state.get(pid)
         present = target.exists() or target.is_symlink()
+        if pid in deferred:
+            continue
+        if known and known.get("declined"):
+            lines.append(f"  skipped   {pid}: you said no (omarchy plugin add it yourself if you change your mind)")
+            continue
         if known and not present:
             lines.append(f"  skipped   {pid}: you removed it")
             continue
@@ -248,7 +330,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0) -> int:
             lines.append(f"  FAILED    {pid}: {error}")
 
     try:
-        lines += apply_defaults(recipe, dry_run, shell_timeout)
+        lines += apply_defaults(recipe, dry_run, shell_timeout, waiting=bool(deferred))
     except PluginError as error:
         failed += 1
         lines.append(f"  FAILED    {error}")

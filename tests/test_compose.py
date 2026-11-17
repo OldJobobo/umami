@@ -59,12 +59,13 @@ class Fixture(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def recipe(self, body: str):
-        write(self.recipe_dir / "recipe.toml", '[flavor]\nname = "test"\n\n' + textwrap.dedent(body))
+    def recipe(self, body: str, code=True):
+        head = '[flavor]\nname = "test"\n' + ("code = true\n" if code else "") + "\n"
+        write(self.recipe_dir / "recipe.toml", head + textwrap.dedent(body))
         return load(self.recipe_dir / "recipe.toml")
 
-    def compose(self, body: str):
-        report = Composer(self.recipe(body), self.source, self.dest).run()
+    def compose(self, body: str, code=True):
+        report = Composer(self.recipe(body, code), self.source, self.dest).run()
         return report, {t["id"]: t for t in report["transforms"]}
 
 
@@ -388,3 +389,74 @@ class LuaTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TierTest(Fixture):
+    """A flavor is declarative unless it says code = true (tiers.py)."""
+
+    def test_a_declarative_flavor_composes_without_code(self):
+        report, t = self.compose("""
+            [[transform]]
+            id = "gaps"
+            type = "lua.set"
+            path = "general.gaps_out"
+            value = 4
+
+            [[transform]]
+            id = "focus"
+            type = "bind.replace"
+            keys = "super+return"
+            description = "Focus left"
+            action = { focus = "l" }
+        """, code=False)
+        self.assertEqual(report["status"], "ok")
+        module = (self.dest / "default/hypr/flavor.lua").read_text()
+        self.assertIn('o.rebind("super+return", "Focus left", hl.dsp.focus({ direction = "l" }))', module)
+
+    def test_code_needs_to_be_declared(self):
+        for body in ('id = "x"\ntype = "lua"\ncode = "os.execute(1)"',
+                     'id = "x"\ntype = "bind.add"\nkeys = "super+z"\ndescription = "x"\nrun = "curl x | sh"',
+                     'id = "x"\ntype = "bind.add"\nkeys = "super+z"\ndescription = "x"\nlua = "os.exit()"',
+                     'id = "x"\ntype = "lua.set"\npath = "input.kb_layout"\nvalue = "us"',
+                     'id = "x"\ntype = "file.remove"\npath = "bin/omarchy-git-url-check"'):
+            with self.assertRaisesRegex(RecipeError, "run code"):
+                self.recipe("[[transform]]\n" + body + "\n", code=False)
+
+    def test_actions_are_checked(self):
+        for action in ('{ focus = "x" }', '{ omarchy = "omarchy-x; rm -rf ~" }', '{ omarchy = "bash -c x" }',
+                       '{ run = "x" }', '{ focus = "l", swap = "r" }'):
+            with self.assertRaises(RecipeError):
+                self.recipe(f'[[transform]]\nid = "x"\ntype = "bind.add"\nkeys = "super+z"\ndescription = "x"\naction = {action}\n',
+                            code=False)
+
+    def test_a_declarative_omarchy_action_must_be_an_omarchy_command(self):
+        report, t = self.compose("""
+            [[transform]]
+            id = "k"
+            type = "bind.add"
+            keys = "super+z"
+            description = "x"
+            action = { omarchy = "omarchy-not-a-command" }
+        """, code=False)
+        self.assertEqual(t["k"]["status"], "stale")
+
+    def test_a_declarative_flavor_cannot_remove_a_service(self):
+        write(self.source / "shell/plugins/lock/manifest.json", '{"id": "omarchy.lock", "kinds": ["service"]}')
+        report, t = self.compose("""
+            [[transform]]
+            id = "nolock"
+            type = "shell.plugins.remove"
+            ids = ["omarchy.lock"]
+        """, code=False)
+        self.assertNotEqual(report["status"], "ok")
+        self.assertTrue((self.dest / "shell/plugins/lock/manifest.json").exists())
+
+    def test_an_optional_unbind_of_a_free_key_is_fine(self):
+        report, t = self.compose("""
+            [[transform]]
+            id = "free"
+            type = "bind.remove"
+            keys = "super+ctrl+x"
+            optional = true
+        """, code=False)
+        self.assertEqual(t["free"]["status"], "applied")

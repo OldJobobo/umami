@@ -12,6 +12,8 @@
 
 [flavor]
 name = "mac-switcher"
+# Runs code: fathom-alt-tab loads the Fathom plugin's own Lua file into Hyprland.
+code = true
 
 [[plugin]]
 id = "rosakodu.dock"

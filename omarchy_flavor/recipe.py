@@ -9,6 +9,7 @@ REQUIRED_KEYS = {
     "file.add": ["path", "source"],
     "file.remove": ["path"],
     "patch": ["file", "anchor"],
+    "diff": [],
     "lua.set": ["path", "value"],
     "bind.add": ["keys", "description"],
     "bind.replace": ["keys", "description"],
@@ -86,6 +87,12 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({tid}): {ttype} needs {', '.join(missing)}")
         if ttype in ("bind.add", "bind.replace") and "run" not in raw and "lua" not in raw:
             raise RecipeError(f"{where} ({tid}): {ttype} needs run or lua")
+        if ttype == "diff":
+            sources = raw.get("sources")
+            if ("source" in raw) == (sources is not None):
+                raise RecipeError(f"{where} ({tid}): diff needs exactly one of source, sources")
+            if sources is not None and (not isinstance(sources, list) or not sources or not all(isinstance(x, str) for x in sources)):
+                raise RecipeError(f"{where} ({tid}): sources must be a non-empty list of paths")
         if ttype == "patch" and sum(k in raw for k in ("insert_before", "insert_after", "replace_with")) != 1:
             raise RecipeError(f"{where} ({tid}): patch needs exactly one of insert_before, insert_after, replace_with")
         options = {k: v for k, v in raw.items() if k not in ("id", "type", "required")}

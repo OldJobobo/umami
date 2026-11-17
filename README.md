@@ -58,6 +58,7 @@ A transform with `required = true` that ends stale or failed makes the whole com
 | `file.add` | `path`, `source`, `mode`?, `upstream_sha256`? | Replacing an upstream file: record its hash to detect drift |
 | `file.remove` | `path` | |
 | `patch` | `file`, `anchor`, one of `insert_before` / `insert_after` / `replace_with` | Anchor must occur exactly once |
+| `diff` | `source`, or `sources` (tried in order, first that applies wins), `strip`? | A `git diff`, applied all or nothing; one that no longer applies is stale. For carrying an open pull request, with a version per Omarchy line it lands on |
 | `lua.set` | `path` (`general.gaps_out`), `value` | Emitted as `hl.config` in `default/hypr/flavor.lua` |
 | `bind.add` / `bind.replace` | `keys`, `description`, `run` (command string or table like `{ launch = "foot" }`) or `lua` (raw dispatcher) | `bind.replace` needs the chord bound literally upstream |
 | `bind.remove` | `keys` | |

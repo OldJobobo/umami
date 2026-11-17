@@ -217,6 +217,117 @@ class ComposeTest(Fixture):
         self.assertTrue((self.source / "version").exists())
 
 
+    def test_diff_applies_edits_new_files_and_modes(self):
+        write(self.recipe_dir / "change.diff", """
+            diff --git a/bin/omarchy-script b/bin/omarchy-script
+            --- a/bin/omarchy-script
+            +++ b/bin/omarchy-script
+            @@ -1,2 +1,2 @@
+            -pids=()
+            +running=0
+             wait
+            diff --git a/bin/omarchy-new b/bin/omarchy-new
+            new file mode 100755
+            --- /dev/null
+            +++ b/bin/omarchy-new
+            @@ -0,0 +1,2 @@
+            +#!/bin/bash
+            +echo new
+        """)
+        _, t = self.compose("""
+            [[transform]]
+            id = "pr"
+            type = "diff"
+            source = "change.diff"
+        """)
+        self.assertEqual(t["pr"]["status"], "applied", t["pr"])
+        self.assertEqual((self.dest / "bin/omarchy-script").read_text(), "running=0\nwait\n")
+        self.assertTrue(os.access(self.dest / "bin/omarchy-new", os.X_OK))
+        self.assertEqual(sorted(t["pr"]["changed"]), ["bin/omarchy-new", "bin/omarchy-script"])
+        self.assertEqual((self.source / "bin/omarchy-script").read_text(), "pids=()\nwait\n")
+
+    def test_diff_that_no_longer_applies_is_stale_and_changes_nothing(self):
+        write(self.recipe_dir / "change.diff", """
+            diff --git a/bin/omarchy-script b/bin/omarchy-script
+            --- a/bin/omarchy-script
+            +++ b/bin/omarchy-script
+            @@ -1,2 +1,2 @@
+            -pids=(old)
+            +running=0
+             wait
+            diff --git a/default/hypr/looknfeel.lua b/default/hypr/looknfeel.lua
+            --- a/default/hypr/looknfeel.lua
+            +++ b/default/hypr/looknfeel.lua
+            @@ -1 +1 @@
+            -hl.config({ general = { gaps_out = 10 } })
+            +hl.config({ general = { gaps_out = 2 } })
+        """)
+        _, t = self.compose("""
+            [[transform]]
+            id = "pr"
+            type = "diff"
+            source = "change.diff"
+        """)
+        self.assertEqual(t["pr"]["status"], "stale")
+        self.assertIn("no longer applies", t["pr"]["detail"])
+        # The hunk that still matches is not applied on its own.
+        self.assertIn("gaps_out = 10", (self.dest / "default/hypr/looknfeel.lua").read_text())
+
+    def test_diff_sources_use_the_first_that_applies(self):
+        write(self.recipe_dir / "edge.diff", """
+            diff --git a/bin/omarchy-script b/bin/omarchy-script
+            --- a/bin/omarchy-script
+            +++ b/bin/omarchy-script
+            @@ -1,2 +1,2 @@
+            -pids=(edge)
+            +running=0
+             wait
+        """)
+        write(self.recipe_dir / "stable.diff", """
+            diff --git a/bin/omarchy-script b/bin/omarchy-script
+            --- a/bin/omarchy-script
+            +++ b/bin/omarchy-script
+            @@ -1,2 +1,2 @@
+            -pids=()
+            +running=1
+             wait
+        """)
+        _, t = self.compose("""
+            [[transform]]
+            id = "pr"
+            type = "diff"
+            sources = ["edge.diff", "stable.diff"]
+        """)
+        self.assertEqual(t["pr"]["status"], "applied", t["pr"])
+        self.assertEqual(t["pr"]["warnings"], ["applied stable.diff"])
+        self.assertEqual((self.dest / "bin/omarchy-script").read_text(), "running=1\nwait\n")
+
+    def test_diff_needs_source_or_sources(self):
+        with self.assertRaises(RecipeError):
+            self.recipe("""
+                [[transform]]
+                id = "pr"
+                type = "diff"
+            """)
+
+    def test_diff_cannot_write_outside_the_tree(self):
+        write(self.recipe_dir / "escape.diff", """
+            diff --git a/../escaped b/../escaped
+            new file mode 100644
+            --- /dev/null
+            +++ b/../escaped
+            @@ -0,0 +1 @@
+            +out
+        """)
+        _, t = self.compose("""
+            [[transform]]
+            id = "escape"
+            type = "diff"
+            source = "escape.diff"
+        """)
+        self.assertNotEqual(t["escape"]["status"], "applied")
+        self.assertFalse((self.dest.parent / "escaped").exists())
+
 class RecipeTest(Fixture):
     def test_unknown_type_is_rejected(self):
         with self.assertRaises(RecipeError):

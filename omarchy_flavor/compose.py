@@ -138,6 +138,40 @@ class Composer:
         target.write_text(text)
         r.changed.append(self.rel(target))
 
+    def t_diff(self, t, r):
+        """Apply a unified diff (`git diff` output, paths a/ and b/) to the
+        tree. One that no longer applies cleanly is stale, as a whole: a
+        change carried as a diff, such as an open pull request, is all or
+        nothing.
+
+        `sources` lists alternatives, tried in order, and the first that
+        applies cleanly is used: the same change made for each Omarchy line
+        it has to land on (the development branch and a stable release, say).
+        """
+        names = t.get("sources") or [t.get("source")]
+        # The tree is not a repository; keep git from finding one above it.
+        env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(self.dest.resolve().parent)}
+        base = ["git", "apply", f"-p{int(t.get('strip', 1))}", "--whitespace=nowarn"]
+        reasons = []
+        for name in names:
+            source = self.recipe.resolve_source(name)
+            if not source.is_file():
+                raise RecipeError(f"source not found: {name}")
+            check = subprocess.run(base + ["--check", str(source)], cwd=self.dest, env=env, capture_output=True, text=True)
+            if check.returncode != 0:
+                first = next((line for line in check.stderr.splitlines() if line.startswith("error:")), check.stderr.strip())
+                reasons.append(f"{name}: {first.removeprefix('error: ')}")
+                continue
+            stat = subprocess.run(base + ["--numstat", "-z", str(source)], cwd=self.dest, env=env, capture_output=True, text=True, check=True)
+            subprocess.run(base + [str(source)], cwd=self.dest, env=env, capture_output=True, text=True, check=True)
+            for entry in stat.stdout.split("\0"):
+                if entry.strip():
+                    r.changed.append(entry.split("\t", 2)[-1])
+            if len(names) > 1:
+                r.warnings.append(f"applied {name}")
+            return
+        raise Stale("no longer applies: " + "; ".join(reasons))
+
     def t_lua_set(self, t, r):
         try:
             table = lua.nested(t.get("path"), t.get("value"))

@@ -460,3 +460,16 @@ class TierTest(Fixture):
             optional = true
         """, code=False)
         self.assertEqual(t["free"]["status"], "applied")
+
+
+class BuiltinPatchTest(Fixture):
+    def test_the_flavor_tree_counts_as_a_package_install(self):
+        write(self.source / "bin/omarchy-version",
+              '#!/bin/bash\nif [[ $omarchy_path != "/usr/share/omarchy" ]]; then\n  echo dev\nfi\n', mode=0o755)
+        report, t = self.compose("", code=False)
+        builtin = {p["file"]: p["status"] for p in report["builtin"]}
+        self.assertEqual(builtin["bin/omarchy-version"], "applied")
+        self.assertIn('$omarchy_path != "/var/lib/omarchy-flavor/tree"', (self.dest / "bin/omarchy-version").read_text())
+        # Scripts this Omarchy doesn't have, or has changed, are reported, not fatal.
+        self.assertEqual(builtin["bin/omarchy-channel-set"], "stale")
+        self.assertEqual(report["status"], "ok")

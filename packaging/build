@@ -1,0 +1,14 @@
+#!/bin/bash
+# Build the omarchy-flavor pacman package from this checkout's HEAD.
+#   packaging/build            -> packaging/out/omarchy-flavor-<ver>-1-any.pkg.tar.zst
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+ver=$(sed -n 's/^pkgver=//p' "$root/packaging/arch/PKGBUILD")
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cp "$root/packaging/arch/PKGBUILD" "$root/packaging/arch/omarchy-flavor.install" "$work/"
+git -C "$root" archive --format=tar.gz --prefix="omarchy-flavor-$ver/" -o "$work/omarchy-flavor-$ver.tar.gz" HEAD
+(cd "$work" && makepkg --nodeps --noconfirm --cleanbuild >/dev/null)
+mkdir -p "$root/packaging/out"
+cp "$work"/omarchy-flavor-*.pkg.tar.zst "$root/packaging/out/"
+ls "$root"/packaging/out/omarchy-flavor-*.pkg.tar.zst

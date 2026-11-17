@@ -1,0 +1,17 @@
+post_install() {
+  echo "Pick a flavor to start: sudo omarchy-flavor use zen"
+  echo "Flavors: /usr/share/omarchy-flavor/flavors (or a directory with your own recipe.toml)"
+}
+
+pre_remove() {
+  # Point Omarchy back at stock before the compositor goes away.
+  if grep -q '^# Written by omarchy-flavor' /etc/omarchy.conf 2>/dev/null; then
+    /usr/lib/omarchy-flavor/bin/omarchy-flavor disable
+    echo "Reboot to finish returning to stock Omarchy."
+  fi
+}
+
+post_remove() {
+  git config --system --unset-all safe.directory /var/lib/omarchy-flavor/tree 2>/dev/null || true
+  echo "After the reboot you can delete /etc/omarchy-flavor and /var/lib/omarchy-flavor."
+}

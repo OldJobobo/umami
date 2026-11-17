@@ -95,6 +95,10 @@ def recompose(hook: bool = False) -> int:
     but exit 0, since pacman prints any nonzero hook as an error, and the
     package transaction itself did succeed."""
     require_root()
+    if not RECIPE.is_file():
+        if hook:
+            return 0  # the package is installed, but no flavor has been picked
+        sys.exit(f"omarchy-flavor: no flavor picked yet ({RECIPE} is missing); try: sudo omarchy-flavor use zen")
     STATE.mkdir(parents=True, exist_ok=True)
     new = STATE / "tree.new"
     old = STATE / "tree.old"
@@ -133,6 +137,48 @@ def enable() -> int:
     git_safe_directory()
     point_at(TREE)
     print(f"Omarchy will run from {TREE} after the next reboot.")
+    return 0
+
+
+EXAMPLES = Path("/usr/share/omarchy-flavor/flavors")
+
+
+def use(flavor: str) -> int:
+    """Install a flavor: a name from the package's flavors, or a recipe
+    directory. Copies it to /etc/omarchy-flavor, composes, and enables it."""
+    require_root()
+    source = Path(flavor)
+    if not (source / "recipe.toml").is_file():
+        source = EXAMPLES / flavor
+    if not (source / "recipe.toml").is_file():
+        names = sorted(p.name for p in EXAMPLES.iterdir() if (p / "recipe.toml").is_file()) if EXAMPLES.is_dir() else []
+        sys.exit(f"omarchy-flavor: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
+    recipe = load(source / "recipe.toml")  # refuses a broken recipe before anything changes
+
+    if OMARCHY_CONF.is_file() and CONF_MARKER not in OMARCHY_CONF.read_text():
+        for line in OMARCHY_CONF.read_text().splitlines():
+            if line.startswith("export OMARCHY_PATH="):
+                current = line.split("=", 1)[1].strip('"')
+                if current.rstrip("/") != str(STOCK):
+                    sys.exit(f"omarchy-flavor: Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
+
+    print(f"flavor {recipe.name}: " + ("runs code, trusted like a package" if recipe.code else "declarative"))
+    staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")
+    if staged.exists():
+        shutil.rmtree(staged)
+    shutil.copytree(source, staged, symlinks=False)
+    for path in [staged, *staged.rglob("*")]:
+        os.chown(path, 0, 0)
+        path.chmod(path.stat().st_mode & ~0o022)
+    if RECIPE.parent.exists():
+        shutil.rmtree(RECIPE.parent)
+    staged.rename(RECIPE.parent)
+
+    code = recompose()
+    if code != 0:
+        return code
+    enable()
+    print("Reboot to start running the flavor.")
     return 0
 
 

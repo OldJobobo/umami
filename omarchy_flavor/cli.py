@@ -23,6 +23,9 @@ def print_report(report: dict):
     code = report.get("code") or []
     print(f"tier: code, trusted like a package ({len(code)} transforms run code)" if code
           else "tier: declarative (nothing in it runs as written)")
+    for patch in report.get("builtin") or []:
+        if patch["status"] != "applied":
+            print(f"        note: built-in patch to {patch['file']} no longer applies ({patch['why']} may not hold)")
     for t in report["transforms"]:
         print(f"  {MARK[t['status']]} {t['id']:<24} {t['type']}" + (" (required)" if t["required"] else ""))
         if t["detail"]:
@@ -108,6 +111,10 @@ def main(argv=None) -> int:
     recompose = sub.add_parser("recompose", help="root: compose /etc/omarchy-flavor/recipe.toml onto stock into /var/lib/omarchy-flavor/tree")
     recompose.add_argument("--hook", action="store_true", help="called from the pacman hook: exit 0 even when the composition fails")
     recompose.set_defaults(func=lambda args: system.recompose(hook=args.hook))
+
+    use = sub.add_parser("use", help="root: install a flavor (a name, or a directory with recipe.toml), compose and enable it")
+    use.add_argument("flavor")
+    use.set_defaults(func=lambda args: system.use(args.flavor))
 
     user_sync = sub.add_parser("user-sync", help="as your user: install the flavor's plugins (runs at login)")
     user_sync.add_argument("--recipe", default=str(user.TREE_RECIPE), help="recipe to read (default: the composed tree's copy)")

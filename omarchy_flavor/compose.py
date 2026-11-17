@@ -434,6 +434,42 @@ class Composer:
         if "anchor not found" in where and self.lua_owners:
             self.lua_owners[0].warnings.append(f"flavor.lua is loaded {where}")
 
+    # Stock Omarchy takes any OMARCHY_PATH but /usr/share/omarchy for a dev
+    # checkout: switching channel would unlink the flavor, and the version
+    # would read "dev". These teach the composed copy that the flavor's tree
+    # is a package install too. They are the compositor's own (not part of a
+    # recipe's tier), and one that stops applying is reported, never fatal.
+    LIVE_TREE = "/var/lib/omarchy-flavor/tree"
+    BUILTIN_PATCHES = [
+        ("bin/omarchy-channel-set", "switching channel keeps the flavor",
+         'if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then',
+         'if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" && $OMARCHY_PATH != "{tree}" ]]; then'),
+        ("bin/omarchy-channel-current", "the channel reads stable or edge, not dev",
+         'if [[ $OMARCHY_PATH != "/usr/share/omarchy" ]]; then',
+         'if [[ $OMARCHY_PATH != "/usr/share/omarchy" && $OMARCHY_PATH != "{tree}" ]]; then'),
+        ("bin/omarchy-version", "the version reads the package's, not dev",
+         'if [[ $omarchy_path != "/usr/share/omarchy" ]]; then',
+         'if [[ $omarchy_path != "/usr/share/omarchy" && $omarchy_path != "{tree}" ]]; then'),
+        ("bin/omarchy-version-branch", "no dev branch is reported",
+         '[[ $omarchy_path != "/usr/share/omarchy" ]] || exit 1',
+         '[[ $omarchy_path != "/usr/share/omarchy" && $omarchy_path != "{tree}" ]] || exit 1'),
+        ("bin/omarchy-update-dev", "omarchy update doesn't treat the tree as a checkout",
+         '[[ $OMARCHY_PATH != "/usr/share/omarchy" ]] || exit 0',
+         '[[ $OMARCHY_PATH != "/usr/share/omarchy" && $OMARCHY_PATH != "{tree}" ]] || exit 0'),
+    ]
+
+    def builtin_patches(self) -> list:
+        results = []
+        for rel, why, old, new in self.BUILTIN_PATCHES:
+            path = self.dest / rel
+            text = path.read_text(errors="replace") if path.is_file() else ""
+            if text.count(old) == 1:
+                path.write_text(text.replace(old, new.format(tree=self.LIVE_TREE)))
+                results.append({"file": rel, "why": why, "status": "applied"})
+            else:
+                results.append({"file": rel, "why": why, "status": "stale"})
+        return results
+
     def run(self) -> dict:
         if self.dest.exists() and any(self.dest.iterdir()):
             raise RecipeError(f"destination is not empty: {self.dest}")
@@ -451,6 +487,7 @@ class Composer:
                 r.status, r.detail = "failed", str(error)
             self.results.append(r)
         self.write_lua()
+        builtin = self.builtin_patches()
 
         blocking = [r for r in self.results if r.required and r.status in ("stale", "failed")]
         if blocking:
@@ -471,6 +508,7 @@ class Composer:
             "status": status,
             "blocking": [r.id for r in blocking],
             "transforms": [r.__dict__ for r in self.results],
+            "builtin": builtin,
         }
         report_dir = self.dest / REPORT_DIR
         report_dir.mkdir(exist_ok=True)

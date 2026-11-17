@@ -34,32 +34,35 @@ name = "zen"
 [defaults]
 theme = "Vantablack"
 
-# The bar: the time and date small on the left with the status indicators
-# after them, the workspaces in the middle, and on the right only Pocket's
-# mark, with everything else behind it. Point at the mark to bring them out.
+# The bar: the time and date small on the left, the workspaces in the
+# middle, and on the right the status indicators, the tray and Pocket's mark,
+# with everything else behind it. Point at the mark to bring them out.
 #
 # A widget goes only where its shortcut works without it. The menu button
 # (Super+Space) and the keyboard layout (Super+I) are taken off. The Audio,
 # Network, Bluetooth, Display and Power panels open from their bar icon, so
 # Super+Ctrl+A/N/B/D/P need them: they go in Pocket, and their panels still
-# open from there. So do the tray and which-key's icon, which holds its
-# Enabled switch. The update notice stays out, where stock puts it beside the
-# workspaces: it only shows when updates are ready, and that should be seen.
+# open from there. So does which-key's icon, which holds its Enabled switch.
+# The tray stays out, so apps in it are one click away. The update notice
+# stays out too, where stock puts it beside the workspaces: it only shows
+# when updates are ready, and that should be seen.
 #
 # Applied once, through Omarchy's own `omarchy plugin disable` and
 # `omarchy bar move/set`, so a layout you make afterwards stays. Pocket
-# holds the run of widgets just left of its mark, so it goes last.
+# holds the run of its members just left of its mark, so it goes last and
+# the tray goes before that run.
 [defaults.bar]
 remove = ["omarchy.menu", "omarchy.keyboard-layout"]
 move = [
   { id = "omarchy.workspaces", section = "center", index = 0 },
   { id = "omarchy.clock", section = "left", index = 0 },
-  { id = "omarchy.indicators", section = "left", index = 1 },
+  { id = "omarchy.indicators", section = "right", index = 0 },
+  { id = "omarchy.tray", section = "right", index = 1 },
   { id = "jrmmhm.pocket", section = "right", index = 99 },
 ]
 set = [
   { id = "omarchy.clock", key = "format", value = "HH:mm  d MMM" },
-  { id = "jrmmhm.pocket", key = "members", value = "omarchy.tray,huacnlee.which-key,omarchy.bluetooth,omarchy.network,omarchy.audio,omarchy.monitor,omarchy.power" },
+  { id = "jrmmhm.pocket", key = "members", value = "huacnlee.which-key,omarchy.bluetooth,omarchy.network,omarchy.audio,omarchy.monitor,omarchy.power" },
 ]
 
 [[plugin]]

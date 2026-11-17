@@ -473,3 +473,15 @@ class BuiltinPatchTest(Fixture):
         # Scripts this Omarchy doesn't have, or has changed, are reported, not fatal.
         self.assertEqual(builtin["bin/omarchy-channel-set"], "stale")
         self.assertEqual(report["status"], "ok")
+
+    def test_switching_channel_keeps_the_flavor_linked(self):
+        write(self.source / "bin/omarchy-channel-set",
+              '#!/bin/bash\nif [[ -z $dev_checkout ]]; then\n  omarchy-dev-unlink --no-reboot\n'
+              '  export OMARCHY_PATH=/usr/share/omarchy\nfi\n', mode=0o755)
+        report, t = self.compose("", code=False)
+        statuses = [p["status"] for p in report["builtin"] if p["file"] == "bin/omarchy-channel-set"]
+        # The leaving_dev line is missing from this script; the other two apply.
+        self.assertEqual(statuses, ["stale", "applied", "applied"])
+        text = (self.dest / "bin/omarchy-channel-set").read_text()
+        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/omarchy-flavor/tree" ]] || omarchy-dev-unlink --no-reboot', text)
+        self.assertIn('[[ $OMARCHY_PATH == "/var/lib/omarchy-flavor/tree" ]] || export OMARCHY_PATH=/usr/share/omarchy', text)

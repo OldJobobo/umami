@@ -444,6 +444,16 @@ class Composer:
         ("bin/omarchy-channel-set", "switching channel keeps the flavor",
          'if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" ]]; then',
          'if [[ -z $dev_checkout && $OMARCHY_PATH != "/usr/share/omarchy" && $OMARCHY_PATH != "{tree}" ]]; then'),
+        # Every non-dev switch unlinks, which would write stock into
+        # /etc/omarchy.conf and drop the flavor at the next reboot.
+        ("bin/omarchy-channel-set", "switching channel doesn't point Omarchy back at stock",
+         '  omarchy-dev-unlink --no-reboot\n',
+         '  [[ $OMARCHY_PATH == "{tree}" ]] || omarchy-dev-unlink --no-reboot\n'),
+        # The hook has just recomposed the tree onto the new channel's
+        # Omarchy, so the update that follows runs from it.
+        ("bin/omarchy-channel-set", "the update after a switch runs from the flavor",
+         '  export OMARCHY_PATH=/usr/share/omarchy\n',
+         '  [[ $OMARCHY_PATH == "{tree}" ]] || export OMARCHY_PATH=/usr/share/omarchy\n'),
         ("bin/omarchy-channel-current", "the channel reads stable or edge, not dev",
          'if [[ $OMARCHY_PATH != "/usr/share/omarchy" ]]; then',
          'if [[ $OMARCHY_PATH != "/usr/share/omarchy" && $OMARCHY_PATH != "{tree}" ]]; then'),

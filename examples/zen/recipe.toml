@@ -18,6 +18,10 @@
 # The plugins come from the Omarchy marketplace (plugins.omarchy.org), are
 # installed for each user at login as ordinary user plugins, and are pinned to
 # the commit the marketplace validated, as of 2026-11-16.
+#
+# One step is yours: which-key hooks into Hyprland by adding a marked block to
+# your own ~/.config/hypr/bindings.lua, so the flavor leaves that to you. Open
+# the Which Key widget's settings in the bar and turn on Enabled.
 
 [flavor]
 name = "zen"
@@ -36,7 +40,7 @@ note = "Vimium-style hints over every window."
 
 [[plugin]]
 id = "jrmmhm.pocket"
-repo = "https://github.com/jrmmhm/pocket"
+repo = "https://github.com/jrmmhm/omarchy-pocket"
 commit = "3002564dc4c57b52958a6fff9dcae006f138cb57"
 note = "Tucks bar widgets you rarely use behind one mark."
 

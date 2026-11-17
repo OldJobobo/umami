@@ -1,19 +1,49 @@
 # Mac switcher: Omarchy for people coming from macOS.
 #
-# A dock, a Spotlight-style launcher, an Alt+Tab app switcher and a choice of
-# lock screens, all from the Omarchy plugin marketplace (plugins.omarchy.org).
+# A dock along the bottom, Spotlight on Super+Space, Alt+Tab through your
+# windows, a menu bar with the clock on the right, rounded windows with a
+# soft shadow, and a light theme. The pieces come from the Omarchy plugin
+# marketplace (plugins.omarchy.org).
+#
+#   Super + Space            Spotlight: apps, files, calculator, web
+#   Super + Alt + Space      Omarchy menu        (was Super + Space)
+#   Alt + Tab                switch windows, most recent first (Fathom)
+#   Super + Q / Super + W    close the window    (stock, like Cmd+Q / Cmd+W)
+#   Super + Shift + Space    hide or show the bar (stock)
 #
 # The plugins are installed for each user at login, as ordinary user plugins
-# (`umami user-sync`), never into Omarchy's own tree: there a plugin
-# would be first-party and get every capability its manifest asks for. Each
-# is pinned to the commit the marketplace validated, as of 2026-11-16.
+# (`umami user-sync`), only after the user says yes to Omarchy's own plugin
+# warning, and never into Omarchy's own tree: there a plugin would be
+# first-party and get every capability its manifest asks for. Each is pinned
+# to the commit the marketplace validated, as of 2026-11-16.
 #
-# The transforms do what a plugin can't: wire keys to the plugins.
+# The flavor is declarative: every line is data that umami checks and turns
+# into configuration, and nothing in it runs as written. Fathom's Alt+Tab
+# needs its own Hyprland file; `plugin.hypr` loads it from Fathom's install,
+# so the code that runs is Fathom's, which the user accepted.
+#
+# The dock needs no settings: by default it sits opposite the bar, at the
+# bottom, stays visible and keeps windows clear of it, as on a Mac. Its "···"
+# widget in the bar changes that (autohide, overlay, widgets).
 
 [flavor]
 name = "mac-switcher"
-# Runs code: fathom-alt-tab loads the Fathom plugin's own Lua file into Hyprland.
-code = true
+
+# Applied once, at each user's first login on the flavor. Change them
+# afterwards and your choice stays.
+[defaults]
+theme = "White"
+
+# The menu bar: the Omarchy menu and workspaces on the left, where stock puts
+# them and where the Apple menu sits, and the clock last on the right with
+# the date, as macOS shows it ("Tue 17 Nov  09:14").
+[defaults.bar]
+move = [
+  { id = "omarchy.clock", section = "right", index = 99 },
+]
+set = [
+  { id = "omarchy.clock", key = "format", value = "ddd d MMM  HH:mm" },
+]
 
 [[plugin]]
 id = "rosakodu.dock"
@@ -39,31 +69,54 @@ repo = "https://github.com/SirJul1337/omarchy-lock-explorer"
 commit = "6eaabfa5c385b3899c60ad139033ce2e418296a9"
 note = "Lock screen designs. Replaces omarchy.lock while enabled (clonedFrom)."
 
-# Spotlight takes over the app launcher key, Super+Alt+Space, from the stock
-# Apps grid: on a Mac, Spotlight is how you launch apps. Super+Space stays the
-# Omarchy menu. (Alt+Space, Spotlight's own default, is dictation in stock
-# Omarchy whenever a dictation backend is installed.)
+# ------------------------------------------------------------------- look
+
+# Rounded corners, a soft shadow and a little blur. Stock gaps and
+# animations stay.
+[[transform]]
+id = "rounded-corners"
+type = "lua.set"
+path = "decoration.rounding"
+value = 10
+
+[[transform]]
+id = "soft-shadows"
+type = "lua.set"
+path = "decoration.shadow.enabled"
+value = true
+
+[[transform]]
+id = "blur"
+type = "lua.set"
+path = "decoration.blur.enabled"
+value = true
+
+# ------------------------------------------------------------------- keys
+
+# Super+Space is Spotlight, as Cmd+Space is on a Mac. Spotlight launches
+# apps, so it replaces the Apps grid's key too, and the Omarchy menu moves
+# there. (Alt+Space, Spotlight's own default, is dictation in stock Omarchy
+# whenever a dictation backend is installed.)
 [[transform]]
 id = "spotlight-key"
 type = "bind.replace"
-keys = "SUPER + ALT + SPACE"
+keys = "SUPER + SPACE"
 description = "Spotlight"
-run = "omarchy-shell shell toggle io.github.maajix.spotlight '{}'"
+action = { panel = "io.github.maajix.spotlight" }
 
-# Alt+Tab goes to Fathom. Fathom ships this snippet: it unbinds Omarchy's
-# Alt+Tab and Alt+Shift+Tab and binds its own, and does nothing for a user
-# who doesn't have Fathom installed and enabled. Its README asks you to paste
-# this block into ~/.config/hypr/bindings.lua; the flavor does it for everyone.
+[[transform]]
+id = "menu-key"
+type = "bind.replace"
+keys = "SUPER + ALT + SPACE"
+description = "Omarchy menu"
+action = { menu = "root" }
+
+# Alt+Tab goes to Fathom. Fathom ships this file: it takes Alt+Tab and
+# Alt+Shift+Tab from Omarchy while Fathom is enabled, and does nothing
+# otherwise. Its README asks you to load it from ~/.config/hypr/bindings.lua;
+# the flavor does it for everyone who installed Fathom.
 [[transform]]
 id = "fathom-alt-tab"
-type = "lua"
-code = '''
-do
-  local fathom = os.getenv("HOME") .. "/.config/omarchy/plugins/io.github.mtolhuys.fathom/hypr/fathom.lua"
-  local file = io.open(fathom, "r")
-  if file then
-    file:close()
-    pcall(dofile, fathom)
-  end
-end
-'''
+type = "plugin.hypr"
+plugin = "io.github.mtolhuys.fathom"
+file = "hypr/fathom.lua"

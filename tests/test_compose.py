@@ -422,6 +422,29 @@ class TierTest(Fixture):
             with self.assertRaisesRegex(RecipeError, "run code"):
                 self.recipe("[[transform]]\n" + body + "\n", code=False)
 
+    PLUGIN = '[[plugin]]\nid = "acme.switch"\nrepo = "https://example.com/switch"\ncommit = "' + "a" * 40 + '"\n\n'
+
+    def test_a_plugins_own_hyprland_file_loads_declaratively(self):
+        report, t = self.compose(self.PLUGIN + """
+            [[transform]]
+            id = "switch-keys"
+            type = "plugin.hypr"
+            plugin = "acme.switch"
+            file = "hypr/switch.lua"
+        """, code=False)
+        self.assertEqual(t["switch-keys"]["status"], "applied")
+        module = (self.dest / "default/hypr/flavor.lua").read_text()
+        self.assertIn('(os.getenv("HOME") or "") .. "/.config/omarchy/plugins/acme.switch/hypr/switch.lua"', module)
+        self.assertIn("pcall(dofile, file)", module)
+
+    def test_plugin_hypr_stays_inside_one_of_the_recipes_plugins(self):
+        for plugin, file in (("acme.switch", "../../.bashrc"), ("acme.switch", "/etc/x.lua"),
+                             ("acme.switch", "hypr/x.sh"), ("acme.switch", ".hidden/x.lua"),
+                             ("acme.other", "hypr/x.lua")):
+            with self.assertRaises(RecipeError):
+                self.recipe(self.PLUGIN + f'[[transform]]\nid = "x"\ntype = "plugin.hypr"\nplugin = "{plugin}"\nfile = "{file}"\n',
+                            code=False)
+
     def test_actions_are_checked(self):
         for action in ('{ focus = "x" }', '{ omarchy = "omarchy-x; rm -rf ~" }', '{ omarchy = "bash -c x" }',
                        '{ run = "x" }', '{ focus = "l", swap = "r" }'):

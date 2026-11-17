@@ -15,6 +15,7 @@ REQUIRED_KEYS = {
     "diff": [],
     "lua.set": ["path", "value"],
     "lua": [],
+    "plugin.hypr": ["plugin", "file"],
     "bind.add": ["keys", "description"],
     "bind.replace": ["keys", "description"],
     "bind.remove": ["keys"],
@@ -101,6 +102,9 @@ def load(path) -> Recipe:
                     tiers.check_action(raw["action"])
                 except ValueError as error:
                     raise RecipeError(f"{where} ({tid}): {error}") from error
+        if ttype == "plugin.hypr" and not tiers.plugin_file_ok(raw.get("file")):
+            raise RecipeError(f"{where} ({tid}): plugin.hypr file must be a relative .lua path inside the plugin, "
+                              f"got {raw.get('file')!r}")
         if ttype == "lua" and ("code" in raw) == ("source" in raw):
             raise RecipeError(f"{where} ({tid}): lua needs exactly one of code, source")
         if ttype == "diff":
@@ -145,6 +149,12 @@ def load(path) -> Recipe:
         if unknown:
             raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
         recipe.plugins.append(dict(raw))
+
+    # plugin.hypr loads a file from a plugin the user consents to, so the
+    # plugin must be one of this recipe's own.
+    for t in recipe.transforms:
+        if t.type == "plugin.hypr" and t.get("plugin") not in seen_plugins:
+            raise RecipeError(f"{t.id}: plugin.hypr names {t.get('plugin')!r}, which is not a [[plugin]] of this recipe")
 
     # Per-user settings applied once, at a user's first login on the flavor.
     defaults = data.get("defaults", {})

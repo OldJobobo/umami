@@ -7,6 +7,12 @@ list of actions, removing bar widgets and panels, and the [defaults] and
 [[plugin]] tables (plugins go through Omarchy's own validation and the user's
 consent). Nothing in them is run as written.
 
+plugin.hypr is declarative too: it loads a Hyprland Lua file shipped by one
+of the recipe's own plugins, from that user's install, only if the user said
+yes to the plugin. The code is the plugin's, which the user accepted with
+Omarchy's warning, and it runs as that user inside Hyprland, never as root.
+The flavor adds no code of its own.
+
 Everything else runs code someone wrote: diffs, patches, replaced commands,
 added files, raw Lua, a binding to an arbitrary shell command, and removing a
 background service such as the lock screen. A recipe has to say
@@ -27,6 +33,12 @@ DIRECTIONS = {"l", "r", "u", "d"}
 LAYOUT_MESSAGE = re.compile(r"^[a-z]+( [a-z0-9-]+)?$")
 OMARCHY_COMMAND = re.compile(r"^omarchy-[a-z0-9-]+( [A-Za-z0-9._:=-]+)*$")
 SHELL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PLUGIN_FILE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\.lua$")
+
+
+def plugin_file_ok(path) -> bool:
+    """A plain relative .lua path: no leading slash, no '..' or hidden parts."""
+    return isinstance(path, str) and bool(PLUGIN_FILE.match(path)) and ".." not in path
 
 # What a declarative removal may take away: things on screen, not services.
 REMOVABLE_KINDS = {"bar-widget", "panel", "overlay", "menu"}
@@ -87,7 +99,7 @@ def code_reason(ttype: str, options: dict):
         if "action" in options:
             return None
         return "binds a key to raw Lua" if "lua" in options else "binds a key to a shell command"
-    if ttype in ("bind.remove", "shell.plugins.remove"):
+    if ttype in ("bind.remove", "shell.plugins.remove", "plugin.hypr"):
         return None
     return {
         "lua": "adds raw Lua",

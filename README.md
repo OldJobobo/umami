@@ -81,6 +81,7 @@ A flavor is declarative unless its `[flavor]` table says `code = true`. Declarat
 - `lua.set` on how windows look and are laid out (`general`, `decoration`, `animations`, `dwindle`, `master`, `scrolling`, `group`, `misc`), with plain values
 - `bind.remove`, and `bind.add`/`bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
 - `shell.plugins.remove` of bar widgets, panels, overlays and menus (not services such as the lock screen)
+- `plugin.hypr`: load a Hyprland Lua file that one of the recipe's own plugins ships (`plugin = "<id>"`, `file = "hypr/x.lua"`), from the user's install of it. It loads only if the user said yes to the plugin, runs as that user inside Hyprland, never as root, and the code is the plugin's, not the flavor's
 - `[defaults]` and `[[plugin]]`
 
 Everything else runs code someone wrote: diffs, patches, replaced or wrapped commands, added or removed files, raw Lua, a binding to `run` a shell command or to raw `lua`, removing a service. Such a recipe must say `code = true`, and `plan` prints its tier. The composed Omarchy also runs through sudo, so a flavor that runs code is trusted like a package: install it from a signed package, never from a bare URL.
@@ -121,7 +122,7 @@ The bar layout works the same way, once, through Omarchy's own commands; a layou
 | Flavor | Shows |
 | --- | --- |
 | [`examples/zen`](examples/zen/recipe.toml) | Settings, plugin removal, many binding changes, raw Lua, two marketplace plugins |
-| [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Four marketplace plugins wired to keys, one of them replacing the lock screen |
+| [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Declarative: four marketplace plugins wired to keys (one loads its own Hyprland file through `plugin.hypr`, one replaces the lock screen), a Mac-style bar and look, a light theme |
 | [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |
 | [`examples/jobo`](examples/jobo/recipe.toml) | Carrying open pull requests as diffs, a version per Omarchy line |
 

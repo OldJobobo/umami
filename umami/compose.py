@@ -192,6 +192,25 @@ class Composer:
             raise RecipeError("lua needs code")
         self.add_lua(t, "lua", code, r)
 
+    def t_plugin_hypr(self, t, r):
+        """Load a Hyprland Lua file one of the recipe's plugins ships, from
+        the user's install of it (plugins are per user, never in the tree).
+        A user who declined the plugin, or hasn't decided yet, has no such
+        file, and nothing happens. pcall keeps an error in the plugin's file
+        from stopping the rest of the config."""
+        path = f"/.config/omarchy/plugins/{t.get('plugin')}/{t.get('file')}"
+        code = (
+            "do\n"
+            f'  local file = (os.getenv("HOME") or "") .. {lua.literal(path)}\n'
+            '  local handle = io.open(file, "r")\n'
+            "  if handle then\n"
+            "    handle:close()\n"
+            "    pcall(dofile, file)\n"
+            "  end\n"
+            "end"
+        )
+        self.add_lua(t, f"{t.get('plugin')}'s {t.get('file')}, if installed", code, r)
+
     def t_lua_set(self, t, r):
         try:
             table = lua.nested(t.get("path"), t.get("value"))

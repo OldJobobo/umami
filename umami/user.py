@@ -297,6 +297,56 @@ def ask(recipe, pending: list) -> bool:
         return False
 
 
+def leftovers(recipe, state: dict) -> list:
+    """Plugins a flavor installed that this flavor doesn't use: left over from
+    the previous flavor, or dropped by a new release. Ones the user installed
+    themselves, or chose to keep, are never listed."""
+    wanted = {p["id"] for p in recipe.plugins}
+    return sorted(pid for pid, known in state.items()
+                  if isinstance(known, dict) and known.get("commit") and not known.get("kept")
+                  and pid not in wanted and (plugins_dir() / pid).exists())
+
+
+def ask_leftovers(recipe, state: dict, ids: list) -> bool:
+    flavors = sorted({state[pid].get("flavor") or "an earlier" for pid in ids} - {recipe.name})
+    origin = f"the {', '.join(flavors)} flavor" if flavors else "an earlier release of this flavor"
+    print(f"{origin[0].upper() + origin[1:]} added {'this plugin' if len(ids) == 1 else 'these plugins'}, "
+          f"which {recipe.name} doesn't use:\n")
+    for pid in ids:
+        print(f"  {pid}")
+    print("\nPlugins you installed yourself are not touched. Keep them, and they become yours.\n")
+    prompt = f"Remove {'it' if len(ids) == 1 else 'them'}?"
+    if shutil.which("gum") and os.isatty(0):
+        return run_tty(["gum", "confirm", "--default=false", prompt]) == 0
+    try:
+        return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assume_yes: bool) -> list:
+    """Offer to remove the leftover plugins, once; the answer is remembered."""
+    if not ids:
+        return []
+    if dry_run or assume_yes or not interactive:
+        return [f"  leftover  {pid}: from an earlier flavor (user-sync --review asks)" for pid in ids]
+    lines = []
+    if ask_leftovers(recipe, state, ids):
+        for pid in ids:
+            result = run(["omarchy-plugin-remove", pid, "--yes"])
+            if result.returncode == 0:
+                state.pop(pid, None)
+                lines.append(f"  removed   {pid}")
+            else:
+                lines.append(f"  FAILED    removing {pid}: " + (result.stderr or result.stdout).strip()[:200])
+    else:
+        for pid in ids:
+            state[pid]["kept"] = True
+            lines.append(f"  kept      {pid}: yours now")
+    save_state(state)
+    return lines
+
+
 def run_tty(command) -> int:
     return subprocess.run(command).returncode
 
@@ -313,11 +363,29 @@ def open_review():
     return False
 
 
+def refresh() -> int:
+    """Run inside the user's session after a live flavor switch: reload
+    Hyprland and the shell from the new tree, then do what login does."""
+    reload = run(["hyprctl", "reload"])
+    shell = run(["omarchy-restart-shell"])
+    if reload.returncode != 0 or shell.returncode != 0:
+        why = (shell.stderr or reload.stderr or "").strip()[:200]
+        if shutil.which("notify-send"):
+            run(["notify-send", "-a", "umami", "Flavor switched", f"Log out and back in to finish. {why}".strip()])
+        return 1
+    wait_for_shell(30)
+    code = sync()
+    if shutil.which("notify-send"):
+        run(["notify-send", "-a", "umami", f"Flavor {load(TREE_RECIPE).name}", "Switched without a reboot."])
+    return code
+
+
 def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive=False, assume_yes=False) -> int:
     recipe = load(recipe_path)
-    if not recipe.plugins and not recipe.defaults and not recipe.locked:
-        return 0
     state = load_state()
+    left = leftovers(recipe, state)
+    if not recipe.plugins and not recipe.defaults and not recipe.locked and not left:
+        return 0
     lines, failed, installed = [], 0, []
     shell_ready = None
 
@@ -325,6 +393,12 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
     pending = [p for p in recipe.plugins if not state.get(p["id"])
                and not ((plugins_dir() / p["id"]).exists() or (plugins_dir() / p["id"]).is_symlink())]
     deferred = set()
+    if left and not pending and not dry_run and not assume_yes and not interactive:
+        # Nothing to install, but something to tidy: ask in the same terminal.
+        opened = open_review()
+        lines.append("  waiting   for your answer about plugins from an earlier flavor"
+                     + ("" if opened else f" (run {SELF} user-sync --review)"))
+        left = []
     if pending and not dry_run and not assume_yes:
         if interactive:
             if not ask(recipe, pending):
@@ -333,6 +407,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
                 save_state(state)
         else:
             deferred = {p["id"] for p in pending}
+            left = []  # the review terminal asks about these too
             opened = open_review()
             lines.append("  waiting   for your OK: " + ", ".join(sorted(deferred))
                          + ("" if opened else f" (run {SELF} user-sync --review)"))
@@ -386,6 +461,8 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
         except PluginError as error:
             failed += 1
             lines.append(f"  FAILED    {pid}: {error}")
+
+    lines += tidy(recipe, state, left, dry_run, interactive, assume_yes)
 
     try:
         lines += apply_defaults(recipe, dry_run, shell_timeout, waiting=bool(deferred))

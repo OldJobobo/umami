@@ -117,6 +117,12 @@ set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }] # omarchy bar 
 
 The bar layout works the same way, through Omarchy's own commands; a layout the user makes afterwards stays. Each entry is tracked on its own, so when a new release of the flavor changes one entry, only that entry is applied again. A widget that a release of Omarchy doesn't have is skipped.
 
+## Switching flavors
+
+`sudo umami flavor <name>` from stock needs a reboot: it changes `OMARCHY_PATH`, which every part of the session reads once at login. From one flavor to another it doesn't: the path stays `/var/lib/umami/tree` and only what is in it changes. So when your session already runs a flavor, `umami flavor` swaps the tree and has your session run `umami refresh`: Hyprland reloads, the shell restarts, and the user layer runs as at login.
+
+Plugins the old flavor installed that the new one doesn't use are offered for removal once, in the same terminal as the new flavor's plugins. Keep them and they become yours; plugins you installed yourself are never touched. A widget the flavor removed answers `omarchy plugin enable` with "this machine's flavor removes it" instead of "not known".
+
 ## Defaults and locks
 
 Everything above is a default: where the flavor starts, which the user can change and keep. A flavor can also lock things, for a company that wants certain things simply not available:

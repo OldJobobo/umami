@@ -7,6 +7,7 @@ package in /usr/share/omarchy.
 
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,7 @@ OMARCHY_CONF = Path("/etc/omarchy.conf")
 SUDOERS = Path("/etc/sudoers.d/omarchy-dev-path")
 SYSTEM_SECURE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin"
 CONF_MARKER = "# Written by umami"
+SELF = "/usr/lib/umami/bin/umami"
 
 
 def require_root():
@@ -188,12 +190,50 @@ def flavor(flavor: str) -> int:
         shutil.rmtree(RECIPE.parent)
     staged.rename(RECIPE.parent)
 
+    live = live_session()  # before anything changes: is this session already on a flavor?
     code = recompose()
     if code != 0:
         return code
     enable()
-    print("Reboot to start running the flavor.")
+    if live and switch_live(*live):
+        print(f"Switched live for {live[0]}: Hyprland and the shell reload now, without a reboot.")
+    else:
+        print("Reboot to start running the flavor.")
     return 0
+
+
+def user_env(uid: int) -> dict:
+    return {"XDG_RUNTIME_DIR": f"/run/user/{uid}", "PATH": SYSTEM_SECURE_PATH, "HOME": pwd.getpwuid(uid).pw_dir}
+
+
+def live_session():
+    """(user, uid, Hyprland signature) when the user running sudo has a
+    session that already runs from the composed tree. Switching from one
+    flavor to another then needs no reboot: every part of the session points
+    at the same path, and only what is in it changes. From stock it does."""
+    name = os.environ.get("SUDO_USER")
+    if not name or name == "root":
+        return None
+    try:
+        uid = pwd.getpwnam(name).pw_uid
+    except KeyError:
+        return None
+    env = subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in user_env(uid).items()],
+                          "systemctl", "--user", "show-environment"], capture_output=True, text=True)
+    if f"OMARCHY_PATH={TREE}" not in env.stdout.splitlines():
+        return None
+    hypr = Path(f"/run/user/{uid}/hypr")
+    signatures = sorted(hypr.iterdir(), key=lambda d: d.stat().st_mtime) if hypr.is_dir() else []
+    return (name, uid, signatures[-1].name) if signatures else None
+
+
+def switch_live(name: str, uid: int, signature: str) -> bool:
+    """Have the user's own session pick the new flavor up (umami refresh)."""
+    env = {**user_env(uid), "HYPRLAND_INSTANCE_SIGNATURE": signature}
+    command = f"hl.dsp.exec_cmd([[{SELF} refresh]])"
+    result = subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in env.items()],
+                             "hyprctl", "dispatch", command], capture_output=True, text=True)
+    return result.returncode == 0 and "ok" in result.stdout
 
 
 def disable() -> int:

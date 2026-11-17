@@ -560,6 +560,19 @@ class BuiltinPatchTest(Fixture):
         self.assertEqual(builtin["bin/omarchy-channel-set"], "stale")
         self.assertEqual(report["status"], "ok")
 
+    def test_enabling_a_plugin_the_flavor_removed_says_why(self):
+        write(self.source / "bin/omarchy-plugin-enable",
+              '#!/bin/bash\nif [[ $result == "unknown" ]]; then\n'
+              '  fail "plugin \'$id\' is not known; run: omarchy-shell shell rescanPlugins"\nfi\n', mode=0o755)
+        report, t = self.compose("""
+            [[transform]]
+            id = "no-weather"
+            type = "shell.plugins.remove"
+            ids = ["omarchy.weather"]
+        """, code=False)
+        self.assertIn("this machine's flavor removes it", (self.dest / "bin/omarchy-plugin-enable").read_text())
+        self.assertEqual((self.dest / ".flavor/removed").read_text(), "omarchy.weather\n")
+
     def test_switching_channel_keeps_the_flavor_linked(self):
         write(self.source / "bin/omarchy-channel-set",
               '#!/bin/bash\nif [[ -z $dev_checkout ]]; then\n  omarchy-dev-unlink --no-reboot\n'

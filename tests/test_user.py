@@ -21,6 +21,7 @@ FAKES = {
     "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.theme"',
     "omarchy-theme-current": 'cat "$FAKE_LOG.theme" 2>/dev/null || echo Unknown',
     "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"',
+    "omarchy-plugin-remove": 'echo "remove $*" >> "$FAKE_LOG"; rm -rf "$HOME/.config/omarchy/plugins/$1"',
     "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"; [[ $1 != *missing* ]] || { echo "plugin \'$1\' is not known" >&2; exit 1; }',
     "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
     "omarchy-launch-floating-terminal-with-presentation": 'echo "review $*" >> "$FAKE_LOG"',
@@ -252,6 +253,56 @@ class UserLayerTest(unittest.TestCase):
         user.sync(path, shell_timeout=1)
         user.sync(path, shell_timeout=1)
         self.assertEqual(self.bar_calls().count("bar set omarchy.clock format HH:mm"), 2)
+
+    # ---------------------------------------------------------- switching
+
+    def switch_to_a_flavor_without_the_dock(self):
+        self.sync(self.first)  # flavor "test" installs acme.dock
+        mine = self.home / ".config/omarchy/plugins/me.mine"
+        mine.mkdir(parents=True)
+        return self.write_recipe('[flavor]\nname = "other"\n'), mine
+
+    def answering(self, answer, path, **kwargs):
+        asked = []
+        original = user.ask_leftovers
+        user.ask_leftovers = lambda recipe, state, ids: asked.append(ids) or answer
+        try:
+            self.assertEqual(user.sync(path, shell_timeout=1, **kwargs), 0)
+        finally:
+            user.ask_leftovers = original
+        return asked
+
+    def test_switching_flavors_offers_to_remove_the_old_flavors_plugins(self):
+        path, mine = self.switch_to_a_flavor_without_the_dock()
+        self.assertEqual(self.answering(True, path, interactive=True), [["acme.dock"]])
+        self.assertFalse(self.installed.exists())
+        self.assertTrue(mine.exists())
+        self.assertIn("remove acme.dock --yes", self.log.read_text())
+        self.assertNotIn("acme.dock", user.load_state())
+
+    def test_kept_leftovers_become_yours_and_are_not_asked_about_again(self):
+        path, _ = self.switch_to_a_flavor_without_the_dock()
+        self.answering(False, path, interactive=True)
+        self.assertTrue(self.installed.exists())
+        self.assertEqual(self.answering(True, path, interactive=True), [])
+
+    def test_at_login_leftovers_open_the_review_and_nothing_is_removed(self):
+        path, _ = self.switch_to_a_flavor_without_the_dock()
+        self.log.write_text("")
+        self.assertEqual(self.answering(True, path), [])
+        self.assertTrue(self.installed.exists())
+        for _ in range(100):  # the terminal is launched detached
+            if "review" in self.log.read_text():
+                break
+            time.sleep(0.02)
+        self.assertIn("user-sync --review", self.log.read_text())
+
+    def test_a_plugin_the_new_flavor_also_has_is_not_a_leftover(self):
+        self.sync(self.first)
+        state = user.load_state()
+        state["acme.dock"]["flavor"] = "earlier"
+        user.save_state(state)
+        self.assertEqual(self.answering(True, self.recipe(self.first), interactive=True), [])
 
     # ------------------------------------------------------------ consent
 

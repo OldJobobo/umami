@@ -139,6 +139,9 @@ def main(argv=None) -> int:
     user_sync.set_defaults(func=lambda args: user.sync(args.recipe, dry_run=args.dry_run,
                                                        interactive=args.review, assume_yes=args.yes))
 
+    refresh = sub.add_parser("refresh", help="as your user, in your session: pick up a flavor switched live (umami flavor runs it)")
+    refresh.set_defaults(func=lambda args: user.refresh())
+
     for name, help_text in (("enable", "root: point Omarchy at the composed tree (after reboot)"),
                             ("disable", "root: point Omarchy back at stock (after reboot)"),
                             ("status", "show what Omarchy runs from and the last composition report")):

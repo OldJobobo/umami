@@ -611,3 +611,32 @@ class FindFlavorTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             find_flavor("nope", [self.own, self.shipped, Path(self.tmp.name) / "missing"])
         self.assertIn("company, jobo-zen, zen", str(e.exception))
+
+
+class UpdateNoticeTest(unittest.TestCase):
+    def report(self, status, *transforms):
+        return {"flavor": "jobo-zen", "package": "omarchy-dev 4.0.0.r7993-1", "status": status,
+                "transforms": [{"id": i, "status": st, "required": req, "detail": "", "warnings": []}
+                               for i, st, req in transforms]}
+
+    def test_all_applied_names_the_omarchy_version(self):
+        from umami.system import update_notice
+        title, body, urgency = update_notice(self.report("ok", ("a", "applied", True), ("b", "applied", True)))
+        self.assertEqual(title, "Flavor jobo-zen reapplied")
+        self.assertEqual(body, "All 2 changes applied to omarchy-dev 4.0.0.r7993-1.")
+        self.assertEqual(urgency, "normal")
+
+    def test_changes_that_no_longer_apply_are_named(self):
+        from umami.system import update_notice
+        title, body, urgency = update_notice(self.report("degraded", ("a", "applied", True), ("pr", "stale", False)))
+        self.assertIn("with changes", title)
+        self.assertIn("1 of 2 changes applied; pr stale", body)
+        self.assertEqual(urgency, "normal")
+
+    def test_a_failed_flavor_says_omarchy_runs_stock_next_boot(self):
+        from umami.system import update_notice
+        title, body, urgency = update_notice(self.report("failed", ("a", "applied", True), ("must", "failed", True)))
+        self.assertEqual(title, "Flavor jobo-zen could not be reapplied")
+        self.assertIn("must no longer applies", body)
+        self.assertIn("runs stock after the next reboot", body)
+        self.assertEqual(urgency, "critical")

@@ -106,6 +106,45 @@ def package_version() -> str:
     return ""
 
 
+def update_notice(report: dict) -> tuple:
+    """(title, body, urgency) for the desktop notice after an update
+    recomposes the flavor. The update's own window scrolls umami's line away."""
+    name, version = report["flavor"], report.get("package") or "the new Omarchy"
+    count = len(report["transforms"])
+    off = [t for t in report["transforms"] if t["status"] != "applied"]
+    if report["status"] == "failed":
+        blocking = [t["id"] for t in off if t.get("required", True) and t["status"] in ("stale", "failed")]
+        return (f"Flavor {name} could not be reapplied",
+                f"{', '.join(blocking) or 'A required change'} no longer applies to {version}. "
+                "Omarchy runs stock after the next reboot. See: umami status", "critical")
+    if off:
+        return (f"Flavor {name} reapplied, with changes",
+                f"On {version}: {count - len(off)} of {count} changes applied; "
+                + "; ".join(f"{t['id']} {t['status']}" for t in off) + ". See: umami status", "normal")
+    return (f"Flavor {name} reapplied", f"All {count} changes applied to {version}.", "normal")
+
+
+def notify_sessions(title: str, body: str, urgency: str = "normal"):
+    """A desktop notice in every logged-in user's session. Best effort: a
+    machine with nobody logged in, or no notification daemon, gets none."""
+    run_dir = Path("/run/user")
+    for entry in sorted(run_dir.iterdir()) if run_dir.is_dir() else []:
+        if not entry.name.isdigit() or int(entry.name) < 1000 or not (entry / "bus").exists():
+            continue
+        uid = int(entry.name)
+        try:
+            name = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            continue
+        env = {**user_env(uid), "DBUS_SESSION_BUS_ADDRESS": f"unix:path={entry}/bus"}
+        try:
+            subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in env.items()],
+                            "notify-send", "-a", "umami", "-u", urgency, title, body],
+                           capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 def recompose(hook: bool = False) -> int:
     """hook=True (from the pacman hook): report a failed composition loudly
     but exit 0, since pacman prints any nonzero hook as an error, and the
@@ -126,6 +165,8 @@ def recompose(hook: bool = False) -> int:
     report["package"] = package_version()
     REPORT.write_text(json.dumps(report, indent=2) + "\n")
     print(summary(report))
+    if hook:
+        notify_sessions(*update_notice(report))
 
     if report["status"] == "failed":
         # The running session keeps the tree it has; from the next boot

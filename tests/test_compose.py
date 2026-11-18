@@ -8,7 +8,7 @@ from pathlib import Path
 
 from umami import lua
 from umami.compose import Composer
-from umami.recipe import RecipeError, load
+from umami.recipe import RecipeError, UmamiError, load
 
 
 def write(path: Path, text: str, mode=None):
@@ -548,6 +548,63 @@ class LockedTest(Fixture):
         self.assertIn("user-sync", (self.dest / "default/hypr/flavor.lua").read_text())
 
 
+class OverThemeTest(Fixture):
+    """Settings that win over the theme while the user still wins over them."""
+
+    BODY = """
+        [[transform]]
+        id = "border"
+        type = "lua.set"
+        path = "general.border_size"
+        value = 2
+        over_theme = true
+
+        [[transform]]
+        id = "gaps"
+        type = "lua.set"
+        path = "general.gaps_out"
+        value = 4
+    """
+
+    def with_theme_line(self):
+        entry = self.source / "default/hypr/omarchy.lua"
+        entry.write_text(entry.read_text().replace(
+            'require("default.hypr.software-rendering")',
+            'require_optional.module("omarchy.current.theme.hyprland")\nrequire("default.hypr.software-rendering")'))
+
+    def test_over_theme_loads_right_after_the_theme(self):
+        self.with_theme_line()
+        report, t = self.compose(self.BODY, code=False)
+        self.assertEqual(report["status"], "ok")
+        over = (self.dest / "default/hypr/flavor-over-theme.lua").read_text()
+        self.assertIn("border_size = 2", over)
+        self.assertNotIn("gaps_out", over)
+        self.assertNotIn("border_size", (self.dest / "default/hypr/flavor.lua").read_text())
+        lines = (self.dest / "default/hypr/omarchy.lua").read_text().splitlines()
+        theme = lines.index('require_optional.module("omarchy.current.theme.hyprland")')
+        self.assertEqual(lines.index('require_optional.module("default.hypr.flavor")'), theme - 1)
+        self.assertEqual(lines.index('require_optional.module("default.hypr.flavor-over-theme")'), theme + 1)
+        self.assertTrue(t["border"]["over_theme"])
+        self.assertFalse(t["gaps"]["over_theme"])
+        self.assertFalse(t["border"]["locked"])
+
+    def test_without_a_theme_line_it_is_reported_as_not_holding(self):
+        report, t = self.compose(self.BODY, code=False)
+        self.assertEqual(t["border"]["status"], "drift")
+        self.assertTrue(any("a theme still wins" in w for w in t["border"]["warnings"]))
+        self.assertIn('require("default.hypr.flavor-over-theme")', (self.dest / "default/hypr/flavor.lua").read_text())
+
+    def test_only_some_transforms_can_be_over_theme(self):
+        for body in ('[[transform]]\nid = "x"\ntype = "bind.remove"\nkeys = "super+q"\nover_theme = true\n',
+                     '[[transform]]\nid = "x"\ntype = "lua.set"\npath = "general.gaps_in"\nvalue = 1\nover_theme = "yes"\n',
+                     '[[transform]]\nid = "x"\ntype = "lua.set"\npath = "general.gaps_in"\nvalue = 1\nover_theme = true\nlocked = true\n'):
+            with self.assertRaises(RecipeError):
+                self.recipe(body, code=False)
+
+    def test_over_theme_stays_declarative(self):
+        self.assertFalse(self.recipe(self.BODY, code=False).code_transforms)
+
+
 class BuiltinPatchTest(Fixture):
     def test_the_flavor_tree_counts_as_a_package_install(self):
         write(self.source / "bin/omarchy-version",
@@ -608,7 +665,7 @@ class FindFlavorTest(unittest.TestCase):
 
     def test_an_unknown_name_lists_every_flavor(self):
         from umami.system import find_flavor
-        with self.assertRaises(SystemExit) as e:
+        with self.assertRaises(UmamiError) as e:
             find_flavor("nope", [self.own, self.shipped, Path(self.tmp.name) / "missing"])
         self.assertIn("company, jobo-zen, zen", str(e.exception))
 
@@ -692,9 +749,10 @@ class InstallPackagesTest(unittest.TestCase):
             'case $1 in\n'
             '  -Q) [[ $3 == present-pkg ]] ;;\n'
             '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
-            '  -S) exit 0 ;;\n'
             'esac\n')
         (bin_dir / "pacman").chmod(0o755)
+        (bin_dir / "omarchy-pkg-add").write_text('#!/bin/bash\necho "add $*" >> "$PACMAN_LOG"\n')
+        (bin_dir / "omarchy-pkg-add").chmod(0o755)
         self.saved = dict(os.environ)
         os.environ.update({"PATH": f"{bin_dir}:{os.environ['PATH']}", "PACMAN_LOG": str(self.log)})
 
@@ -704,14 +762,15 @@ class InstallPackagesTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def installs(self):
-        return [l for l in self.log.read_text().splitlines() if l.startswith("-S ")] if self.log.exists() else []
+        return [l for l in self.log.read_text().splitlines() if l.startswith("add ")] if self.log.exists() else []
 
     def test_installs_only_what_is_missing_from_a_repository(self):
         from umami.system import install_packages
-        self.assertTrue(install_packages([{"name": "present-pkg"}, {"name": "repo-pkg"}]))
-        self.assertEqual(self.installs(), ["-S --needed --noconfirm -- repo-pkg"])
+        install_packages([{"name": "present-pkg"}, {"name": "repo-pkg"}])
+        self.assertEqual(self.installs(), ["add repo-pkg"])
 
     def test_a_package_in_no_repository_installs_nothing(self):
         from umami.system import install_packages
-        self.assertFalse(install_packages([{"name": "repo-pkg"}, {"name": "aur-pkg"}]))
+        with self.assertRaises(UmamiError):
+            install_packages([{"name": "repo-pkg"}, {"name": "aur-pkg"}])
         self.assertEqual(self.installs(), [])

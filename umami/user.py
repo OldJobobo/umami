@@ -483,13 +483,13 @@ def refresh() -> int:
     shell = run(["omarchy-restart-shell"])
     if reload.returncode != 0 or shell.returncode != 0:
         why = (shell.stderr or reload.stderr or "").strip()[:200]
-        if shutil.which("notify-send"):
-            run(["notify-send", "-a", "umami", "Flavor switched", f"Log out and back in to finish. {why}".strip()])
+        if shutil.which("omarchy-notification-send"):
+            run(["omarchy-notification-send", "--app-name", "umami", "-u", "normal", "Flavor switched", f"Log out and back in to finish. {why}".strip()])
         return 1
     wait_for_shell(30)
     code = sync()
-    if shutil.which("notify-send"):
-        run(["notify-send", "-a", "umami", f"Flavor {load(TREE_RECIPE).name}", "Switched without a reboot."])
+    if shutil.which("omarchy-notification-send"):
+        run(["omarchy-notification-send", "--app-name", "umami", "-u", "normal", f"Flavor {load(TREE_RECIPE).name}", "Switched without a reboot."])
     return code
 
 
@@ -599,7 +599,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
 
     print(f"flavor {recipe.name}: user layer")
     print("\n".join(lines) if lines else "  nothing to do")
-    if (installed or failed) and not dry_run and shutil.which("notify-send"):
+    if (installed or failed) and not dry_run and shutil.which("omarchy-notification-send"):
         body = (f"Installed or updated: {', '.join(installed)}. " if installed else "") + (f"{failed} failed; run umami user-sync to see why." if failed else "")
-        run(["notify-send", "-a", "umami", f"Flavor {recipe.name}", body.strip()])
+        run(["omarchy-notification-send", "--app-name", "umami", "-u", "normal", f"Flavor {recipe.name}", body.strip()])
     return 1 if failed else 0

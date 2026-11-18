@@ -33,8 +33,17 @@ REQUIRED_KEYS = {
 # always locked: it takes the plugin out of the tree.
 LOCKABLE = {"lua.set", "lua", "bind.add", "bind.replace", "bind.remove", "plugin.hypr", "shell.plugins.remove"}
 
+# Transforms that may say `over_theme = true`: loaded right after the theme's
+# Hyprland settings, so the flavor's look wins over the theme's while the
+# user's own Hyprland files still win over the flavor.
+OVER_THEME = {"lua.set", "lua"}
 
-class RecipeError(Exception):
+
+class UmamiError(Exception):
+    """Something umami can't do, said in a sentence; main reports it once."""
+
+
+class RecipeError(UmamiError):
     pass
 
 
@@ -45,6 +54,7 @@ class Transform:
     required: bool
     options: dict
     locked: bool = False
+    over_theme: bool = False
 
     def get(self, key, default=None):
         return self.options.get(key, default)
@@ -130,9 +140,16 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({tid}): locked must be true or false")
         if locked and ttype not in LOCKABLE:
             raise RecipeError(f"{where} ({tid}): {ttype} cannot be locked (only {', '.join(sorted(LOCKABLE))})")
-        options = {k: v for k, v in raw.items() if k not in ("id", "type", "required", "locked")}
+        over_theme = raw.get("over_theme", False)
+        if not isinstance(over_theme, bool):
+            raise RecipeError(f"{where} ({tid}): over_theme must be true or false")
+        if over_theme and ttype not in OVER_THEME:
+            raise RecipeError(f"{where} ({tid}): {ttype} cannot be over_theme (only {', '.join(sorted(OVER_THEME))})")
+        if over_theme and locked:
+            raise RecipeError(f"{where} ({tid}): locked already wins over the theme; drop over_theme")
+        options = {k: v for k, v in raw.items() if k not in ("id", "type", "required", "locked", "over_theme")}
         recipe.transforms.append(Transform(tid, ttype, bool(raw.get("required", False)), options,
-                                           locked or ttype == "shell.plugins.remove"))
+                                           locked or ttype == "shell.plugins.remove", over_theme))
         reason = tiers.code_reason(ttype, options)
         if reason:
             recipe.code_transforms.append((tid, reason))

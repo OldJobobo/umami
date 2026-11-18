@@ -10,12 +10,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import system, user
+from . import system, ui, user
 from .compose import REPORT_DIR, Composer
-from .recipe import RecipeError, load
+from .recipe import UmamiError, load
 
 DEFAULT_SOURCE = "/usr/share/omarchy"
-MARK = {"applied": "ok   ", "drift": "DRIFT", "stale": "STALE", "failed": "FAIL "}
+JSON_HELP = "print the full report as JSON, for scripts and agents"
 
 
 def note_package(report: dict, source: str):
@@ -25,30 +25,31 @@ def note_package(report: dict, source: str):
         report["package"] = report.get("package") or system.package_version()
 
 
-def print_report(report: dict):
-    base = report.get("package") or f"Omarchy {report['source_version'] or '?'}"
-    print(f"flavor {report['flavor']} on {base} ({report['source']})")
-    code = report.get("code") or []
-    print(f"tier: code, trusted like a package ({len(code)} transforms run code)" if code
-          else "tier: declarative (nothing in it runs as written)")
-    for patch in report.get("builtin") or []:
-        if patch["status"] != "applied":
-            print(f"        note: built-in patch to {patch['file']} no longer applies ({patch['why']} may not hold)")
-    for t in report["transforms"]:
-        flags = [f for f, on in (("required", t["required"]), ("locked", t.get("locked"))) if on]
-        print(f"  {MARK[t['status']]} {t['id']:<24} {t['type']}" + (f" ({', '.join(flags)})" if flags else ""))
-        if t["detail"]:
-            print(f"        {t['detail']}")
-        for warning in t["warnings"]:
-            print(f"        note: {warning}")
-    if report.get("packages"):
-        print(f"packages (sudo umami flavor installs them from pacman's repositories): {', '.join(report['packages'])}")
-    if report.get("suites"):
-        print(f"plugin suites (each user is asked first): {', '.join(report['suites'])}")
-    locked = system.locked_items(report)
-    if locked:
-        print(f"locked by the flavor (users can't change these): {', '.join(locked)}")
-    print(f"status: {report['status']}" + (f" (blocked by {', '.join(report['blocking'])})" if report["blocking"] else ""))
+def print_report(report: dict, changes: dict | None = None, recipe_dir: str = "", verbose: bool = False):
+    """A composition report for people: what the flavor is, its changes, what
+    else it does, and how it went, with the next command to run."""
+    say = ui.say
+    say(f"Flavor {report['flavor']}, {ui.tier(report)} · onto {ui.base(report)}")
+    if report["transforms"]:
+        say(f"Changes: {ui.applied_count(report)} {'apply' if len(report['transforms']) > 1 else 'applies'}")
+        for line in ui.transform_lines(report["transforms"], verbose=verbose):
+            say(line)
+        notes = ui.hidden_notes(report["transforms"])
+        if notes and not verbose:
+            say(f"  ({ui.plural(notes, 'note')} on applied changes: --verbose shows them)")
+    for line in ui.extras(report, system.locked_items(report)):
+        say(line)
+    if changes is not None:
+        counts = [f"{len(changes[k])} {k}" for k in ("added", "removed", "changed") if changes[k]]
+        say(f"Files against stock: {' · '.join(counts) or 'none'} (--files lists them, --diff shows the changes)")
+    for line in ui.builtin_lines(report):
+        say(line)
+    say(ui.verdict(report))
+    steps = ui.next_steps(report, recipe_dir or report["flavor"])
+    for line in steps:
+        say(line)
+    if not steps and recipe_dir:
+        say(f"Install it with: sudo umami flavor {recipe_dir}")
 
 
 def files(root: Path) -> set:
@@ -61,39 +62,66 @@ def files(root: Path) -> set:
     return result
 
 
-def diff(source: Path, dest: Path, full: bool) -> str:
+def changed_files(source: Path, dest: Path) -> dict:
     """Added, removed and changed files (stock symlinks compared by content)."""
     before, after = files(source), files(dest)
-    lines = [f"  added    {path}" for path in sorted(after - before)]
-    lines += [f"  removed  {path}" for path in sorted(before - after)]
-    changed = [path for path in sorted(before & after)
-               if not filecmp.cmp(source / path, dest / path, shallow=False)]
-    lines += [f"  changed  {path}" for path in changed]
-    text = "\n".join(lines) + ("\n" if lines else "")
-    if full:
-        for path in sorted(after - before) + changed:
-            old = (source / path).read_text(errors="replace").splitlines(keepends=True) if path in before else []
-            new = (dest / path).read_text(errors="replace").splitlines(keepends=True)
-            text += "".join(difflib.unified_diff(old, new, f"stock/{path}", f"flavor/{path}"))
-        for path in sorted(before - after):
-            text += f"--- stock/{path}\n+++ /dev/null (removed)\n"
+    return {
+        "added": sorted(after - before),
+        "removed": sorted(before - after),
+        "changed": [path for path in sorted(before & after)
+                    if not filecmp.cmp(source / path, dest / path, shallow=False)],
+    }
+
+
+def file_list(changes: dict) -> str:
+    return "".join(f"  {kind:<8} {path}\n" for kind in ("added", "removed", "changed") for path in changes[kind])
+
+
+def unified(source: Path, dest: Path, changes: dict) -> str:
+    text = ""
+    for path in changes["added"] + changes["changed"]:
+        old = (source / path).read_text(errors="replace").splitlines(keepends=True) if path not in changes["added"] else []
+        new = (dest / path).read_text(errors="replace").splitlines(keepends=True)
+        text += "".join(difflib.unified_diff(old, new, f"stock/{path}", f"flavor/{path}"))
+    for path in changes["removed"]:
+        text += f"--- stock/{path}\n+++ /dev/null (removed)\n"
     return text
+
+
+def recipe_hint(path: str) -> str:
+    """How to name this recipe to `sudo umami flavor`: its name when it sits
+    in a flavors folder umami looks in, else its directory."""
+    folder = Path(path).resolve().parent
+    if folder.parent in [d.resolve() for d in (system.own_flavors(), system.EXAMPLES) if d]:
+        return folder.name
+    return str(folder)
 
 
 def cmd_plan(args) -> int:
     recipe = load(args.recipe)
+    source = Path(args.source).resolve()
     with tempfile.TemporaryDirectory(prefix="umami-plan-") as scratch:
         dest = Path(scratch) / "tree"
-        report = Composer(recipe, Path(args.source), dest).run()
+        report = Composer(recipe, source, dest).run()
         note_package(report, args.source)
-        print_report(report)
-        changes = diff(Path(args.source).resolve(), dest, args.diff)
-        print("\nchanges against stock:" if changes else "\nno changes against stock")
-        print(changes, end="")
+        changes = changed_files(source, dest)
+        if args.json:
+            report["files"] = changes
+            if args.diff:
+                report["diff"] = unified(source, dest, changes)
+            print(json.dumps(report, indent=2))
+        else:
+            print_report(report, changes, recipe_hint(args.recipe), args.verbose)
+            if args.files or args.diff:
+                print()
+                print(file_list(changes), end="")
+            if args.diff:
+                print(unified(source, dest, changes), end="")
         if args.keep:
             kept = Path(args.keep)
             subprocess.run(["cp", "-a", "--reflink=auto", str(dest), str(kept)], check=True)
-            print(f"\ncomposed tree kept at {kept}")
+            if not args.json:
+                ui.say(f"Composed tree kept at {kept}")
     return 2 if report["status"] == "failed" else 0
 
 
@@ -104,7 +132,8 @@ def cmd_compose(args) -> int:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print_report(report)
+        print_report(report, verbose=args.verbose)
+        ui.say(f"Composed into {args.out}")
     return 2 if report["status"] == "failed" else 0
 
 
@@ -115,7 +144,10 @@ def main(argv=None) -> int:
     plan = sub.add_parser("plan", help="compose into a scratch directory and show what would change")
     plan.add_argument("recipe")
     plan.add_argument("--source", default=DEFAULT_SOURCE, help=f"Omarchy tree to compose onto (default {DEFAULT_SOURCE})")
-    plan.add_argument("--diff", action="store_true", help="show the full unified diff, not just changed files")
+    plan.add_argument("--files", action="store_true", help="list the files that differ from stock")
+    plan.add_argument("--diff", action="store_true", help="show the full unified diff against stock")
+    plan.add_argument("--json", action="store_true", help=JSON_HELP)
+    plan.add_argument("-v", "--verbose", action="store_true", help="show each change's type and informational notes")
     plan.add_argument("--keep", metavar="DIR", help="keep a copy of the composed tree")
     plan.set_defaults(func=cmd_plan)
 
@@ -123,7 +155,8 @@ def main(argv=None) -> int:
     compose.add_argument("recipe")
     compose.add_argument("--out", required=True)
     compose.add_argument("--source", default=DEFAULT_SOURCE)
-    compose.add_argument("--json", action="store_true")
+    compose.add_argument("--json", action="store_true", help=JSON_HELP)
+    compose.add_argument("-v", "--verbose", action="store_true", help="show each change's type and informational notes")
     compose.set_defaults(func=cmd_compose)
 
     recompose = sub.add_parser("recompose", help="root: compose /etc/umami/recipe.toml onto stock into /var/lib/umami/tree")
@@ -147,16 +180,26 @@ def main(argv=None) -> int:
     refresh.set_defaults(func=lambda args: user.refresh())
 
     for name, help_text in (("enable", "root: point Omarchy at the composed tree (after reboot)"),
-                            ("disable", "root: point Omarchy back at stock (after reboot)"),
-                            ("status", "show what Omarchy runs from and the last composition report")):
+                            ("disable", "root: point Omarchy back at stock (after reboot)")):
         sub.add_parser(name, help=help_text).set_defaults(func=lambda args, name=name: getattr(system, name)())
+
+    status = sub.add_parser("status", help="show which flavor runs, and how its last composition went")
+    status.add_argument("--json", action="store_true", help=JSON_HELP)
+    status.set_defaults(func=lambda args: system.status(as_json=args.json))
 
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except RecipeError as error:
-        print(f"umami: {error}", file=sys.stderr)
+    except UmamiError as error:
+        ui.error(str(error))
         return 1
+    except KeyboardInterrupt:
+        return 130
+    except BrokenPipeError:
+        # A reader like head stopped early: nothing is wrong, and Python mustn't
+        # complain again while flushing on exit.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ FAKES = {
     "omarchy-plugin-enable": 'echo "enable $*" >> "$FAKE_LOG"',
     "omarchy-plugin-list": 'echo "[{\\"id\\": \\"acme.dock\\"}]"',
     "omarchy-shell": 'echo "shell $*" >> "$FAKE_LOG"',
-    "notify-send": 'echo "notify $*" >> "$FAKE_LOG"',
+    "omarchy-notification-send": 'echo "notify $*" >> "$FAKE_LOG"',
     "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.theme"',
     "omarchy-theme-current": 'cat "$FAKE_LOG.theme" 2>/dev/null || echo Unknown',
     "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"; [[ $2 != *gone* ]] || { echo "omarchy-bar: could not find widget $2" >&2; exit 1; }',

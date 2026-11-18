@@ -33,25 +33,80 @@ The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it inst
 ## Dry run
 
 ```bash
-bin/umami plan examples/jobo/recipe.toml          # compose into a scratch dir, show report + changed files
-bin/umami plan examples/jobo/recipe.toml --diff   # with the full diff
+bin/umami plan examples/jobo/recipe.toml            # compose into a scratch dir and say what the flavor does
+bin/umami plan examples/jobo/recipe.toml --files    # also list the files that differ from stock
+bin/umami plan examples/jobo/recipe.toml --diff     # and show the changes themselves
 bin/umami compose examples/jobo/recipe.toml --out DIR
 ```
 
 `--source` picks the Omarchy tree to compose onto (default `/usr/share/omarchy`). Nothing outside the destination is written.
 
+## Output
+
+umami writes for people by default: plain sentences saying what the flavor is, its changes, what else it does, how it went, and the next command to run. Problems come with their reasons. `-v` shows each change's type and informational notes. Nothing is coloured except the `Error:` label of a failure on a terminal.
+
+```
+Flavor shibumi, declarative: nothing in it runs as written · onto omarchy-dev 4.0.0.r8031.ge6aec97-1
+Changes: all 8 changes apply
+  soft-corners       decoration.rounding = 6
+  room-between       general.gaps_in = 6
+  room-around        general.gaps_out = 12
+  ...
+  (2 notes on applied changes: --verbose shows them)
+At each user's first login, theirs to change afterwards: theme Solitude
+Installed with the flavor, each user asked before a plugin or suite: packages shibumi-shell · plugin suites shibumi (shibumi-shell's installer)
+Files against stock: 1 added · 7 changed (--files lists them, --diff shows the changes)
+Everything applies.
+Install it with: sudo umami flavor examples/shibumi
+```
+
+Scripts and agents use `--json` on `plan`, `compose` and `status`: the complete report and nothing else, with each change's `status`, `what`, `detail` and `warnings`, the files against stock for `plan` (and the unified diff with `--diff`), and for `status` where Omarchy runs from now (`this_session`) and after the next boot (`next_boot`). The exit code is 2 when a required change fails, 1 when umami can't do what was asked (said on stderr as `Error: ...`), else 0. In pacman's output, umami writes one `umami:` line, plus one per problem.
+
 ## Report
 
-Every transform ends up as one of:
+Every change ends up as one of:
 
 | Status | Meaning |
 | --- | --- |
-| `ok` | Applied |
-| `DRIFT` | Applied, but upstream changed what it replaces, or a replacement leaves IPC unanswered |
-| `STALE` | Target gone upstream; skipped, the rest of the flavor still applies |
-| `FAIL` | Recipe error (bad source, path outside the tree); skipped |
+| `applied` | Applied |
+| `drift` | Applied, but upstream changed what it replaces, or a replacement leaves IPC unanswered: check it |
+| `stale` | Omarchy changed what it edits; skipped, the rest of the flavor still applies |
+| `failed` | Recipe error (bad source, path outside the tree); skipped |
 
-A transform with `required = true` that ends stale or failed makes the whole composition `failed`. The report is written to `.flavor/report.json` in the composed tree, with a copy of the recipe.
+A change with `required = true` that ends stale or failed makes the whole composition `failed`. The report is written to `.flavor/report.json` in the composed tree, with a copy of the recipe.
+
+### When a transform goes stale
+
+An Omarchy update can change a file a transform edits, so the transform no longer fits. The update still goes through: umami skips that transform, applies the rest, and the pacman output and the desktop notice name it. Your desktop keeps working, without that one change.
+
+1. See which transform it is and why:
+
+   ```sh
+   umami status
+   ```
+
+   Each stale transform is listed with the file and line that no longer matched.
+
+2. Decide what it still needs:
+   - **Upstream now has it** (the pull request a `diff` carried was merged): delete the transform from the recipe.
+   - **You don't want it any more**: delete it from the recipe.
+   - **You still want it**: bring it up to date with the new Omarchy. For a `diff`, rebase the branch it came from onto current Omarchy and write the diff out again. Keep the old one as a later entry in `sources` if the recipe also runs on an older Omarchy, since the first that applies wins. For a `patch`, update its anchor to the new text. For `bind.replace` or `bind.remove`, check what the key is bound to now.
+
+3. Check the changed recipe; this changes nothing on the system:
+
+   ```sh
+   umami plan path/to/recipe.toml
+   ```
+
+   Every transform should be `ok`.
+
+4. Apply it:
+
+   ```sh
+   sudo umami flavor path/to/recipe.toml   # or the flavor's name
+   ```
+
+A flavor in `~/.config/umami/flavors` is yours to edit. A packaged flavor is fixed by a new umami release; until then, the rest of it keeps working.
 
 ## Transforms
 
@@ -164,6 +219,19 @@ locked = true
 | Widgets and panels | `[defaults.bar] remove`: switched off once, can be turned back on | `shell.plugins.remove`: taken out of the tree, nothing to turn on |
 | Theme and bar | `[defaults]`: once | `[locked]`: at every login |
 | Settings and keys | before `~/.config/hypr`: the user wins | `locked = true` (on `lua.set`, `lua`, `bind.*`, `plugin.hypr`): after it, the flavor wins |
+
+In between, `over_theme = true` (on `lua.set` and `lua`) makes a setting win over the theme while the user still wins over it. A flavor's settings normally load before the theme's, so a theme that sets its own border size or gaps replaces the flavor's; an over_theme setting goes in `default/hypr/flavor-over-theme.lua`, loaded right after the theme's settings and before the user's `~/.config/hypr` files. Zen uses it for its seamless borders, so they hold under any theme:
+
+```toml
+[[transform]]
+id = "seamless-gaps-in"
+type = "lua.set"
+path = "general.gaps_in"
+value = -1
+over_theme = true
+```
+
+If Omarchy's `omarchy.lua` has no theme line to follow, the setting loads with the flavor's others and `umami plan` reports that a theme still wins.
 
 Locked transforms go in `default/hypr/flavor-locked.lua`, loaded at the end of `default/hypr/toggles.lua`, which Omarchy's `hyprland.lua` requires after the user's own files. `umami plan` and `umami status` list what is locked. A lock holds against Omarchy's settings, bar, menus and commands; it is not a security boundary, since anyone with sudo can switch the flavor off. For that, give people accounts without admin rights.
 

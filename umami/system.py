@@ -10,12 +10,12 @@ import os
 import pwd
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
+from . import ui
 from .compose import Composer
-from .recipe import load
+from .recipe import UmamiError, load
 
 STOCK = Path("/usr/share/omarchy")
 RECIPE = Path("/etc/umami/recipe.toml")
@@ -31,7 +31,7 @@ SELF = "/usr/lib/umami/bin/umami"
 
 def require_root():
     if os.geteuid() != 0:
-        sys.exit("umami: this needs root (run it through sudo)")
+        raise UmamiError("this needs root. Run it with sudo.")
 
 
 def git_mark(tree: Path):
@@ -71,18 +71,8 @@ def point_at(path: Path):
 
 
 def summary(report: dict) -> str:
-    counts = {}
-    for t in report["transforms"]:
-        counts[t["status"]] = counts.get(t["status"], 0) + 1
-    parts = ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
-    lines = [f"flavor {report['flavor']}: {report['status']} ({parts or 'no transforms'})"]
-    for t in report["transforms"]:
-        if t["status"] != "applied":
-            lines.append(f"  {t['status']}: {t['id']}: {t['detail'] or '; '.join(t['warnings'])}")
-    locked = locked_items(report)
-    if locked:
-        lines.append(f"locked by the flavor: {', '.join(locked)}")
-    return "\n".join(lines)
+    """For pacman's output and logs, where umami's lines sit among others."""
+    return ui.one_line(report)
 
 
 def locked_items(report: dict) -> list:
@@ -139,7 +129,7 @@ def notify_sessions(title: str, body: str, urgency: str = "normal"):
         env = {**user_env(uid), "DBUS_SESSION_BUS_ADDRESS": f"unix:path={entry}/bus"}
         try:
             subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in env.items()],
-                            "notify-send", "-a", "umami", "-u", urgency, title, body],
+                            "omarchy-notification-send", "--app-name", "umami", "-u", urgency, title, body],
                            capture_output=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -153,7 +143,7 @@ def recompose(hook: bool = False) -> int:
     if not RECIPE.is_file():
         if hook:
             return 0  # the package is installed, but no flavor has been picked
-        sys.exit(f"umami: no flavor picked yet ({RECIPE} is missing); try: sudo umami flavor zen")
+        raise UmamiError(f"no flavor picked yet ({RECIPE} is missing). Pick one with: sudo umami flavor zen")
     STATE.mkdir(parents=True, exist_ok=True)
     new = STATE / "tree.new"
     old = STATE / "tree.old"
@@ -173,9 +163,8 @@ def recompose(hook: bool = False) -> int:
         # Omarchy runs stock until the recipe is fixed.
         shutil.rmtree(new)
         point_at(STOCK)
-        print("umami: FAILED: a required transform could not apply.")
-        print("umami: Omarchy will run stock after the next reboot. Fix the recipe, then:")
-        print("umami:   sudo umami recompose && sudo umami enable")
+        print("umami: this session keeps running as it is; after the next reboot Omarchy runs stock.")
+        print("umami: fix the recipe (umami status shows why), then: sudo umami flavor <name>")
         return 0 if hook else 2
 
     git_mark(new)
@@ -190,11 +179,11 @@ def recompose(hook: bool = False) -> int:
 def enable(quiet: bool = False) -> int:
     require_root()
     if not TREE.is_dir():
-        sys.exit("umami: no composed tree yet (run recompose first)")
+        raise UmamiError("there is no composed flavor yet. Pick one with: sudo umami flavor <name>")
     git_safe_directory()
     point_at(TREE)
     if not quiet:
-        print(f"Omarchy will run from {TREE} after the next reboot.")
+        print(f"After the next reboot, Omarchy runs the flavor ({TREE}).")
     return 0
 
 
@@ -220,7 +209,7 @@ def find_flavor(flavor: str, dirs: list[Path]) -> Path:
         if (d / flavor / "recipe.toml").is_file():
             return d / flavor
     names = sorted({p.name for d in dirs if d.is_dir() for p in d.iterdir() if (p / "recipe.toml").is_file()})
-    sys.exit(f"umami: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
+    raise UmamiError(f"no flavor {flavor!r}" + (f". Try: {', '.join(names)}" if names else ""))
 
 
 def flavor(flavor: str) -> int:
@@ -236,11 +225,11 @@ def flavor(flavor: str) -> int:
             if line.startswith("export OMARCHY_PATH="):
                 current = line.split("=", 1)[1].strip('"')
                 if current.rstrip("/") != str(STOCK):
-                    sys.exit(f"umami: Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
+                    raise UmamiError(f"Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
 
-    print(f"flavor {recipe.name}: " + ("runs code, trusted like a package" if recipe.code else "declarative"))
-    if not install_packages(recipe.packages):
-        return 1  # before anything changes: the current flavor stays
+    ui.say(f"Flavor {recipe.name}, " + ("runs code, trusted like a package" if recipe.code
+                                        else "declarative: nothing in it runs as written"))
+    install_packages(recipe.packages)  # before anything changes: a failure leaves the current flavor
     staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")
     if staged.exists():
         shutil.rmtree(staged)
@@ -258,10 +247,9 @@ def flavor(flavor: str) -> int:
         return code
     enable(quiet=True)  # what happens next is said below
     if live and switch_live(*live):
-        print(f"Switched live for {live[0]}: Hyprland and the shell reload now, without a reboot.")
+        ui.say(f"{recipe.name} is running. Hyprland and the shell are reloading.")
     else:
-        print(f"Omarchy will run from {TREE} after the next reboot.")
-        print("Reboot to start running the flavor.")
+        ui.say(f"Reboot to run {recipe.name}.")
     return 0
 
 
@@ -276,25 +264,22 @@ def package_repo(name: str) -> str:
     return ""
 
 
-def install_packages(packages: list) -> bool:
+def install_packages(packages: list):
     """[[package]]: install what is missing, from a repository pacman already
-    trusts. Packages stay when another flavor takes over: other software may
-    need them, and pacman is the place to remove them."""
+    trusts, with Omarchy's own helper. Packages stay when another flavor takes
+    over: other software may need them, and pacman is the place to remove them."""
     missing = [p["name"] for p in packages
                if subprocess.run(["pacman", "-Q", "--", p["name"]], capture_output=True).returncode != 0]
     if not missing:
-        return True
+        return
     for name in missing:
         repo = package_repo(name)
         if not repo:
-            print(f"umami: package {name} is in none of this machine's pacman repositories "
-                  "(a flavor installs only from those, never the AUR)", file=sys.stderr)
-            return False
-        print(f"package {name}: installing from the {repo} repository")
-    if subprocess.run(["pacman", "-S", "--needed", "--noconfirm", "--", *missing]).returncode != 0:
-        print(f"umami: installing {', '.join(missing)} failed; the current flavor is unchanged", file=sys.stderr)
-        return False
-    return True
+            raise UmamiError(f"package {name} is in none of this machine's pacman repositories, "
+                             "and a flavor installs only from those, never the AUR.")
+        ui.say(f"Installing package {name} from the {repo} repository")
+    if subprocess.run(["omarchy-pkg-add", *missing]).returncode != 0:
+        raise UmamiError(f"installing {', '.join(missing)} failed. The current flavor is unchanged.")
 
 
 def user_env(uid: int) -> dict:
@@ -334,22 +319,50 @@ def switch_live(name: str, uid: int, signature: str) -> bool:
 def disable() -> int:
     require_root()
     point_at(STOCK)
-    print("Omarchy will run stock after the next reboot.")
+    print("After the next reboot, Omarchy runs stock, without a flavor.")
     return 0
 
 
-def status() -> int:
+def omarchy_path_label(path: str) -> str:
+    if not path:
+        return "unknown"
+    if path.rstrip("/") == str(TREE):
+        return "the flavor"
+    if path.rstrip("/") == str(STOCK):
+        return "stock Omarchy, no flavor"
+    return f"{path} (a dev checkout)"
+
+
+def status(as_json: bool = False) -> int:
     configured = ""
     if OMARCHY_CONF.is_file():
         for line in OMARCHY_CONF.read_text().splitlines():
             if line.startswith("export OMARCHY_PATH="):
                 configured = line.split("=", 1)[1].strip('"')
-    print(f"configured: OMARCHY_PATH={configured or STOCK}")
-    print(f"this shell: OMARCHY_PATH={os.environ.get('OMARCHY_PATH', '<unset>')}")
-    if REPORT.is_file():
-        report = json.loads(REPORT.read_text())
-        print(f"composed:   {report['composed_at']} from {report.get('package') or report['source_version']}")
-        print(summary(report))
+    configured = configured or str(STOCK)
+    session = os.environ.get("OMARCHY_PATH", "")
+    report = json.loads(REPORT.read_text()) if REPORT.is_file() else None
+    if as_json:
+        print(json.dumps({"next_boot": configured, "this_session": session or None, "report": report}, indent=2))
+        return 0
+
+    if not report:
+        ui.say("No flavor yet. Pick one with: sudo umami flavor <name>")
+        return 0
+    ui.say(f"Flavor {report['flavor']}, {ui.tier(report)}")
+    now, boot = omarchy_path_label(session), omarchy_path_label(configured)
+    if not session:
+        ui.say(f"The next boot runs {boot} (this shell doesn't say what the session runs)")
+    elif session.rstrip("/") == configured.rstrip("/"):
+        ui.say(f"This session runs {now}, and so does the next boot")
     else:
-        print("no composition report yet")
+        ui.say(f"This session runs {now}; from the next boot, {boot}")
+    ui.say(f"Composed {ui.when(report['composed_at'])} onto {ui.base(report)}: {ui.applied_count(report)} applied")
+    for line in ui.transform_lines(ui.problems(report)):
+        ui.say(line)
+    for line in ui.builtin_lines(report):
+        ui.say(line)
+    ui.say(ui.verdict(report, done=True))
+    for line in ui.next_steps(report, report["flavor"]):
+        ui.say(line)
     return 0

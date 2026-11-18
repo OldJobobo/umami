@@ -25,7 +25,7 @@ sudo /usr/lib/umami/bin/umami enable|disable  # flavor or stock, from the next b
 What happens on an update:
 
 1. `omarchy update` upgrades the Omarchy packages.
-2. The pacman hook (`/etc/pacman.d/hooks/90-umami.hook`) recomposes stock + recipe into `/var/lib/umami/tree.new` as root, then swaps it into `tree`, inside the transaction, so migrations run from the composed tree.
+2. The pacman hook (`/etc/pacman.d/hooks/90-umami.hook`) recomposes stock + recipe into `/var/lib/umami/tree.new` as root, then swaps it into `tree`, inside the transaction, so migrations run from the composed tree. Each logged-in user then gets a desktop notice saying how it went: every change reapplied, the ones that no longer apply, or that the flavor failed.
 3. A stale transform is reported in pacman's output and skipped. A required transform that can't apply leaves the running session alone and points `/etc/omarchy.conf` back at stock for the next boot.
 
 The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it instead of aborting the update, and is registered as a system git `safe.directory` because it is root-owned. Both go away once Omarchy has a flavor mode.

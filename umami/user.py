@@ -205,12 +205,13 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
             if dry_run:
                 lines += [f"  would run {' '.join(c)}" for c in todo]
             elif todo:
-                run_bar(todo, shell_timeout)
+                skipped = run_bar(todo, shell_timeout)
                 done |= {command_key(c) for c in todo}
                 current = {command_key(c) for c in commands}
                 mine["bar_done"] = sorted(done & current)
                 save_defaults(applied)
                 lines.append("  set       bar layout" + ("" if len(todo) == len(commands) else f" ({len(todo)} changed)"))
+                lines += skipped
     return lines + apply_locked(recipe, dry_run, shell_timeout, waiting)
 
 
@@ -238,8 +239,9 @@ def apply_locked(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> li
         if dry_run:
             lines += [f"  would run {' '.join(c)} (locked)" for c in commands]
         elif commands:
-            run_bar(commands, shell_timeout)
+            skipped = run_bar(commands, shell_timeout)
             lines.append("  locked    bar layout")
+            lines += skipped
     return lines
 
 
@@ -259,16 +261,24 @@ def without_absent(recipe, commands: list, dry_run: bool) -> list:
     return [c for c in commands if not set(c) & absent]
 
 
-def run_bar(commands: list, shell_timeout: float):
+def run_bar(commands: list, shell_timeout: float) -> list:
+    """Run the bar commands; returns the lines for the widgets skipped."""
     if not wait_for_shell(shell_timeout):
         raise PluginError("bar layout: the shell is not running (run umami user-sync again)")
+    skipped = []
     for command in commands:
         result = run_shell_call(command)
         # A widget this Omarchy doesn't have is already off the bar.
         if result.returncode != 0 and command[0] == "omarchy-plugin-disable" and "is not known" in result.stderr:
             continue
+        # A widget that isn't on this user's bar (taken off, or replaced by
+        # one of their own) has nothing to move or set; the rest still applies.
+        if result.returncode != 0 and command[0] == "omarchy-bar" and "could not find widget" in result.stderr:
+            skipped.append(f"  skipped   {' '.join(command[1:3])}: not on your bar")
+            continue
         if result.returncode != 0:
             raise PluginError(f"bar layout: {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:300])
+    return skipped
 
 
 def bar_commands(bar: dict) -> list:

@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -20,7 +22,7 @@ FAKES = {
     "notify-send": 'echo "notify $*" >> "$FAKE_LOG"',
     "omarchy-theme-set": 'echo "theme $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.theme"',
     "omarchy-theme-current": 'cat "$FAKE_LOG.theme" 2>/dev/null || echo Unknown',
-    "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"',
+    "omarchy-bar": 'echo "bar $*" >> "$FAKE_LOG"; [[ $2 != *gone* ]] || { echo "omarchy-bar: could not find widget $2" >&2; exit 1; }',
     "omarchy-plugin-remove": 'echo "remove $*" >> "$FAKE_LOG"; rm -rf "$HOME/.config/omarchy/plugins/$1"',
     "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"; [[ $1 != *missing* ]] || { echo "plugin \'$1\' is not known" >&2; exit 1; }',
     "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
@@ -202,6 +204,28 @@ class UserLayerTest(unittest.TestCase):
         path = self.recipe_dir / "recipe.toml"
         path.write_text(self.BAR)
         self.assertEqual(user.sync(path, shell_timeout=1), 0)
+
+    def test_a_widget_not_on_your_bar_is_skipped_and_the_rest_applies(self):
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text('''
+            [flavor]
+            name = "t"
+            [defaults.bar]
+            move = [
+              { id = "acme.gone", section = "center", index = 0 },
+              { id = "omarchy.clock", section = "left", index = 0 },
+            ]
+        '''.replace("\n            ", "\n"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertIn("bar move omarchy.clock --section left --index 0", self.log.read_text())
+        self.assertIn("skipped   move acme.gone: not on your bar", out.getvalue())
+        # Done once, like the rest of the defaults: not tried again at every login.
+        self.log.write_text("")
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+        self.assertNotIn("bar", self.log.read_text())
 
     def test_bar_sections_are_checked(self):
         self.recipe_dir.mkdir(exist_ok=True)

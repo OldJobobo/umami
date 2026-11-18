@@ -1,8 +1,9 @@
 # Zen: a quiet, keyboard-first Omarchy.
 #
 # Less on screen: the Vantablack theme, no animations, blur or shadows,
-# square tight tiles, and a bar without the world clock, weather and AI usage
-# widgets. More from the keyboard: vim keys for windows, and a which-key
+# square gapless tiles that share their borders like tmux panes, and a bar
+# without the world clock, weather and AI usage widgets. More from the
+# keyboard: vim keys for windows, and a which-key
 # guide whenever you hold Super. The web-app shortcuts are gone, so
 # Super+Shift is free for moving windows.
 #
@@ -112,20 +113,36 @@ type = "lua.set"
 path = "decoration.rounding"
 value = 0
 
+# Seamless splits, like tmux panes: neighbouring windows share one border.
+# Each border draws outside its window, so a gap of minus half the border puts
+# two neighbours' borders on the same pixels. The border size has to be even
+# until Hyprland accepts fractional gaps (hyprwm/Hyprland#16986). They are
+# over_theme, so they hold whichever theme you pick, while your own
+# ~/.config/hypr files still win over them.
 [[transform]]
-id = "tight-gaps-in"
+id = "shared-border"
+type = "lua.set"
+path = "general.border_size"
+value = 2
+over_theme = true
+
+[[transform]]
+id = "seamless-gaps-in"
 type = "lua.set"
 path = "general.gaps_in"
-value = 2
+value = -1
+over_theme = true
 
 [[transform]]
-id = "tight-gaps-out"
+id = "seamless-gaps-out"
 type = "lua.set"
 path = "general.gaps_out"
-value = 4
+value = 0
+over_theme = true
 
-# The keys that opened the world clock, weather and Agents panels. Bind one
-# again in ~/.config/hypr/bindings.lua and yours wins.
+# The keys that opened the world clock and weather panels. Bind one again in
+# ~/.config/hypr/bindings.lua and yours wins. Super + Ctrl + X stays: it opens
+# the Agents panel on newer Omarchy but toggles dictation on older releases.
 [[transform]]
 id = "no-weather-key"
 type = "bind.remove"
@@ -135,13 +152,6 @@ keys = "SUPER + CTRL + ALT + W"
 id = "no-world-clock-key"
 type = "bind.remove"
 keys = "SUPER + CTRL + ALT + E"
-
-# The Agents panel key exists on edge and the next releases, not on 4.5.
-[[transform]]
-id = "no-agents-key"
-type = "bind.remove"
-keys = "SUPER + CTRL + X"
-optional = true
 
 # ------------------------------------------------------------ vim windows
 

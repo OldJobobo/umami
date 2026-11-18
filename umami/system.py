@@ -160,16 +160,34 @@ def enable(quiet: bool = False) -> int:
 EXAMPLES = Path("/usr/share/umami/flavors")
 
 
+def own_flavors() -> Path | None:
+    """~/.config/umami/flavors of the user running sudo: where your own
+    flavors live, found by name like the package's."""
+    name = os.environ.get("SUDO_USER") or os.environ.get("USER")
+    try:
+        return Path(pwd.getpwnam(name).pw_dir) / ".config/umami/flavors" if name else None
+    except KeyError:
+        return None
+
+
+def find_flavor(flavor: str, dirs: list[Path]) -> Path:
+    """A recipe directory given as a path, or a flavor name looked up in
+    dirs, the first that has it winning."""
+    if (Path(flavor) / "recipe.toml").is_file():
+        return Path(flavor)
+    for d in dirs:
+        if (d / flavor / "recipe.toml").is_file():
+            return d / flavor
+    names = sorted({p.name for d in dirs if d.is_dir() for p in d.iterdir() if (p / "recipe.toml").is_file()})
+    sys.exit(f"umami: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
+
+
 def flavor(flavor: str) -> int:
-    """Install a flavor: a name from the package's flavors, or a recipe
-    directory. Copies it to /etc/umami, composes, and enables it."""
+    """Install a flavor: a name (your own in ~/.config/umami/flavors, then
+    the package's), or a recipe directory. Copies it to /etc/umami,
+    composes, and enables it."""
     require_root()
-    source = Path(flavor)
-    if not (source / "recipe.toml").is_file():
-        source = EXAMPLES / flavor
-    if not (source / "recipe.toml").is_file():
-        names = sorted(p.name for p in EXAMPLES.iterdir() if (p / "recipe.toml").is_file()) if EXAMPLES.is_dir() else []
-        sys.exit(f"umami: no flavor {flavor!r}" + (f" (try: {', '.join(names)})" if names else ""))
+    source = find_flavor(flavor, [d for d in (own_flavors(), EXAMPLES) if d])
     recipe = load(source / "recipe.toml")  # refuses a broken recipe before anything changes
 
     if OMARCHY_CONF.is_file() and CONF_MARKER not in OMARCHY_CONF.read_text():

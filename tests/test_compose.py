@@ -584,3 +584,30 @@ class BuiltinPatchTest(Fixture):
         text = (self.dest / "bin/omarchy-channel-set").read_text()
         self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || omarchy-dev-unlink --no-reboot', text)
         self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || export OMARCHY_PATH=/usr/share/omarchy', text)
+
+
+class FindFlavorTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.own, self.shipped = root / "own", root / "shipped"
+        for d, name in [(self.own, "jobo-zen"), (self.own, "zen"), (self.shipped, "zen"), (self.shipped, "company")]:
+            write(d / name / "recipe.toml", f'[flavor]\nname = "{name}"\n')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_your_own_flavor_is_found_by_name(self):
+        from umami.system import find_flavor
+        self.assertEqual(find_flavor("jobo-zen", [self.own, self.shipped]), self.own / "jobo-zen")
+        self.assertEqual(find_flavor("company", [self.own, self.shipped]), self.shipped / "company")
+
+    def test_your_own_flavor_wins_over_a_shipped_one_of_the_same_name(self):
+        from umami.system import find_flavor
+        self.assertEqual(find_flavor("zen", [self.own, self.shipped]), self.own / "zen")
+
+    def test_an_unknown_name_lists_every_flavor(self):
+        from umami.system import find_flavor
+        with self.assertRaises(SystemExit) as e:
+            find_flavor("nope", [self.own, self.shipped, Path(self.tmp.name) / "missing"])
+        self.assertIn("company, jobo-zen, zen", str(e.exception))

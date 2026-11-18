@@ -119,6 +119,8 @@ The bar layout works the same way, through Omarchy's own commands; a layout the 
 
 ## Switching flavors
 
+Your own flavors go in `~/.config/umami/flavors/<name>/recipe.toml` (with any files the recipe points at beside it), and `sudo umami flavor <name>` finds them by name, before the package's own flavors in `/usr/share/umami/flavors`. Edit one there, and `sudo umami flavor <name>` again picks up the change: the flavor that runs is the copy in `/etc/umami` made at the switch. A path to a recipe directory works too.
+
 `sudo umami flavor <name>` from stock needs a reboot: it changes `OMARCHY_PATH`, which every part of the session reads once at login. From one flavor to another it doesn't: the path stays `/var/lib/umami/tree` and only what is in it changes. So when your session already runs a flavor, `umami flavor` swaps the tree and has your session run `umami refresh`: Hyprland reloads, the shell restarts, and the user layer runs as at login.
 
 Plugins the old flavor installed that the new one doesn't use are offered for removal once, in the same terminal as the new flavor's plugins. Keep them and they become yours; plugins you installed yourself are never touched. A widget the flavor removed answers `omarchy plugin enable` with "this machine's flavor removes it" instead of "not known".

@@ -239,6 +239,8 @@ def flavor(flavor: str) -> int:
                     sys.exit(f"umami: Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
 
     print(f"flavor {recipe.name}: " + ("runs code, trusted like a package" if recipe.code else "declarative"))
+    if not install_packages(recipe.packages):
+        return 1  # before anything changes: the current flavor stays
     staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")
     if staged.exists():
         shutil.rmtree(staged)
@@ -261,6 +263,38 @@ def flavor(flavor: str) -> int:
         print(f"Omarchy will run from {TREE} after the next reboot.")
         print("Reboot to start running the flavor.")
     return 0
+
+
+def package_repo(name: str) -> str:
+    """The sync repository pacman would install `name` from, or "" if none
+    of this machine's (signed, configured) repositories has it."""
+    out = subprocess.run(["pacman", "-Si", "--", name], capture_output=True, text=True,
+                         env={**os.environ, "LC_ALL": "C"})
+    for line in out.stdout.splitlines():
+        if line.startswith("Repository"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def install_packages(packages: list) -> bool:
+    """[[package]]: install what is missing, from a repository pacman already
+    trusts. Packages stay when another flavor takes over: other software may
+    need them, and pacman is the place to remove them."""
+    missing = [p["name"] for p in packages
+               if subprocess.run(["pacman", "-Q", "--", p["name"]], capture_output=True).returncode != 0]
+    if not missing:
+        return True
+    for name in missing:
+        repo = package_repo(name)
+        if not repo:
+            print(f"umami: package {name} is in none of this machine's pacman repositories "
+                  "(a flavor installs only from those, never the AUR)", file=sys.stderr)
+            return False
+        print(f"package {name}: installing from the {repo} repository")
+    if subprocess.run(["pacman", "-S", "--needed", "--noconfirm", "--", *missing]).returncode != 0:
+        print(f"umami: installing {', '.join(missing)} failed; the current flavor is unchanged", file=sys.stderr)
+        return False
+    return True
 
 
 def user_env(uid: int) -> dict:

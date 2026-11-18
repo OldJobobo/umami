@@ -1,0 +1,97 @@
+# Shibumi: Omarchy with HANCORE's Shibumi Shell.
+#
+# Shibumi is quiet elegance that doesn't announce itself. This flavor
+# installs Shibumi Shell (github.com/HANCORE-linux/Shibumi-Shell), a native
+# bar and plugin suite for Omarchy Quattro, and dresses the windows to match:
+# Solitude, HANCORE's own theme that ships with Omarchy, softly rounded
+# windows that match Shibumi's Radius 6, a little room around them, a thin
+# border, and windows you aren't using dimmed slightly, so focus shows
+# without a loud border. Animations and keys stay stock: nothing to learn.
+#
+# Shibumi has its own settings: select the Shibumi wordmark in the bar to
+# open its Control Center (bar style V1 or V2, accent, widgets, frost). They
+# are yours; the flavor doesn't set them.
+#
+# Shibumi comes from Omarchy's package repository. `sudo umami flavor shibumi`
+# installs the package; each user's first login then asks, with Omarchy's
+# plugin warning, before Shibumi's own installer stages its plugins into
+# that user's shell. After an `omarchy update` brings a new Shibumi, the next
+# login runs its update. Switch to another flavor and you're offered its
+# uninstall, which puts the stock Omarchy bar back.
+#
+# Shibumi targets Omarchy 4.5 (Quattro). It is an independent project by
+# HANCORE, not an official Omarchy bar.
+#
+# Declarative: every line is data that umami checks. The code that runs is
+# Shibumi's own installer, from its signed package, after you say yes.
+
+[flavor]
+name = "shibumi"
+
+# Applied once, at each user's first login on the flavor. Pick another theme
+# afterwards and it stays.
+[defaults]
+theme = "Solitude"
+
+[[package]]
+name = "shibumi-shell"
+note = "Shibumi Shell, from Omarchy's package repository."
+
+[[suite]]
+id = "shibumi"
+package = "shibumi-shell"
+command = "shibumi-shell"
+install = ["install", "--yes"]
+update = ["update", "--yes"]
+uninstall = ["uninstall", "--yes"]
+note = "HANCORE's bar and plugin suite; replaces the stock bar while it is installed."
+
+# ------------------------------------------------------------- windows
+
+[[transform]]
+id = "soft-corners"
+type = "lua.set"
+path = "decoration.rounding"
+value = 6
+
+[[transform]]
+id = "room-between"
+type = "lua.set"
+path = "general.gaps_in"
+value = 6
+
+[[transform]]
+id = "room-around"
+type = "lua.set"
+path = "general.gaps_out"
+value = 12
+
+[[transform]]
+id = "thin-border"
+type = "lua.set"
+path = "general.border_size"
+value = 1
+
+[[transform]]
+id = "dim-unfocused"
+type = "lua.set"
+path = "decoration.dim_inactive"
+value = true
+
+[[transform]]
+id = "dim-gently"
+type = "lua.set"
+path = "decoration.dim_strength"
+value = 0.08
+
+[[transform]]
+id = "soft-shadow"
+type = "lua.set"
+path = "decoration.shadow.enabled"
+value = true
+
+[[transform]]
+id = "soft-shadow-range"
+type = "lua.set"
+path = "decoration.shadow.range"
+value = 12

@@ -41,6 +41,10 @@ def print_report(report: dict):
             print(f"        {t['detail']}")
         for warning in t["warnings"]:
             print(f"        note: {warning}")
+    if report.get("packages"):
+        print(f"packages (sudo umami flavor installs them from pacman's repositories): {', '.join(report['packages'])}")
+    if report.get("suites"):
+        print(f"plugin suites (each user is asked first): {', '.join(report['suites'])}")
     locked = system.locked_items(report)
     if locked:
         print(f"locked by the flavor (users can't change these): {', '.join(locked)}")

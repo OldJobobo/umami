@@ -57,6 +57,8 @@ class Recipe:
     omarchy: str = ""
     transforms: list = field(default_factory=list)
     plugins: list = field(default_factory=list)
+    packages: list = field(default_factory=list)
+    suites: list = field(default_factory=list)
     defaults: dict = field(default_factory=dict)
     locked: dict = field(default_factory=dict)
     code: bool = False
@@ -164,6 +166,9 @@ def load(path) -> Recipe:
             raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
         recipe.plugins.append(dict(raw))
 
+    recipe.packages = check_packages(data.get("package", []))
+    recipe.suites = check_suites(data.get("suite", []), {p["name"] for p in recipe.packages}, seen_plugins)
+
     # plugin.hypr loads a file from a plugin the user consents to, so the
     # plugin must be one of this recipe's own.
     for t in recipe.transforms:
@@ -213,3 +218,66 @@ def check_bar_defaults(bar, name="defaults"):
     for entry in bar.get("set", []):
         if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str):
             raise RecipeError(f"[{name}.bar] set entries need id, key and a string value")
+
+
+PACKAGE_NAME = re.compile(r"^[a-z0-9@_+][a-z0-9@._+-]*$")
+COMMAND_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SUITE_ARG = re.compile(r"^-{0,2}[A-Za-z0-9][A-Za-z0-9._=-]*$")
+
+
+def check_packages(raw_list) -> list:
+    """[[package]]: a package from a pacman repository this machine already
+    trusts (signed, in pacman.conf), installed by `umami flavor`. Never the
+    AUR, a file or a URL: only a name, which pacman resolves."""
+    if not isinstance(raw_list, list):
+        raise RecipeError("[[package]] must be a list of tables")
+    packages, seen = [], set()
+    for index, raw in enumerate(raw_list):
+        where = f"package #{index + 1}"
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not PACKAGE_NAME.match(raw["name"]):
+            raise RecipeError(f"{where}: needs a package name")
+        unknown = set(raw) - {"name", "note"}
+        if unknown:
+            raise RecipeError(f"{where} ({raw['name']}): unknown keys {', '.join(sorted(unknown))}")
+        if raw["name"] in seen:
+            raise RecipeError(f"{where}: duplicate package {raw['name']!r}")
+        seen.add(raw["name"])
+        packages.append(dict(raw))
+    return packages
+
+
+def check_suites(raw_list, packages: set, plugins: set) -> list:
+    """[[suite]]: a package's own installer for a set of shell plugins, run as
+    each user after they say yes. The command must belong to one of the
+    recipe's [[package]]s, so the code that runs is the package's; the flavor
+    only names its steps (install, update after the package changes,
+    uninstall when a flavor without it takes over), as plain arguments."""
+    if not isinstance(raw_list, list):
+        raise RecipeError("[[suite]] must be a list of tables")
+    suites, seen = [], set()
+    for index, raw in enumerate(raw_list):
+        where = f"suite #{index + 1}"
+        if not isinstance(raw, dict):
+            raise RecipeError(f"{where}: must be a table")
+        missing = [k for k in ("id", "package", "command", "install", "update", "uninstall") if k not in raw]
+        if missing:
+            raise RecipeError(f"{where}: needs {', '.join(missing)}")
+        sid = raw["id"]
+        if not (isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", sid)):
+            raise RecipeError(f"{where}: bad suite id {sid!r}")
+        if sid in seen or sid in plugins:
+            raise RecipeError(f"{where}: duplicate id {sid!r}")
+        seen.add(sid)
+        unknown = set(raw) - {"id", "package", "command", "install", "update", "uninstall", "note"}
+        if unknown:
+            raise RecipeError(f"{where} ({sid}): unknown keys {', '.join(sorted(unknown))}")
+        if raw["package"] not in packages:
+            raise RecipeError(f"{where} ({sid}): package {raw['package']!r} is not a [[package]] of this recipe")
+        if not (isinstance(raw["command"], str) and COMMAND_NAME.match(raw["command"])):
+            raise RecipeError(f"{where} ({sid}): command must be a bare command name")
+        for step in ("install", "update", "uninstall"):
+            args = raw[step]
+            if not (isinstance(args, list) and args and all(isinstance(a, str) and SUITE_ARG.match(a) for a in args)):
+                raise RecipeError(f"{where} ({sid}): {step} must be a non-empty list of plain arguments")
+        suites.append(dict(raw))
+    return suites

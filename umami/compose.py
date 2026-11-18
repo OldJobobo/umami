@@ -583,6 +583,8 @@ class Composer:
             "blocking": [r.id for r in blocking],
             "transforms": [r.__dict__ for r in self.results],
             "locked": self.recipe.locked,
+            "packages": [p["name"] for p in self.recipe.packages],
+            "suites": [f"{x['id']} ({x['command']}, from {x['package']})" for x in self.recipe.suites],
             "builtin": builtin,
         }
         report_dir = self.dest / REPORT_DIR

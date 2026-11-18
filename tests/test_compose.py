@@ -640,3 +640,78 @@ class UpdateNoticeTest(unittest.TestCase):
         self.assertIn("must no longer applies", body)
         self.assertIn("runs stock after the next reboot", body)
         self.assertEqual(urgency, "critical")
+
+
+class PackageAndSuiteRecipeTest(unittest.TestCase):
+    SUITE = """
+[[suite]]
+id = "shibumi"
+package = "shibumi-shell"
+command = "shibumi-shell"
+install = ["install", "--yes"]
+update = ["update", "--yes"]
+uninstall = ["uninstall", "--yes"]
+"""
+
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "recipe.toml"
+            path.write_text('[flavor]\nname = "t"\n' + text)
+            return load(path)
+
+    def test_a_package_and_its_suite_are_declarative(self):
+        recipe = self.load('[[package]]\nname = "shibumi-shell"\n' + self.SUITE)
+        self.assertFalse(recipe.code)
+        self.assertEqual([p["name"] for p in recipe.packages], ["shibumi-shell"])
+        self.assertEqual(recipe.suites[0]["install"], ["install", "--yes"])
+
+    def test_a_suite_needs_its_package_in_the_recipe(self):
+        with self.assertRaisesRegex(RecipeError, "not a \\[\\[package\\]\\]"):
+            self.load(self.SUITE)
+
+    def test_suite_steps_are_plain_arguments(self):
+        with self.assertRaisesRegex(RecipeError, "plain arguments"):
+            self.load('[[package]]\nname = "shibumi-shell"\n' + self.SUITE.replace('["install", "--yes"]', '["install; rm -rf ~"]'))
+
+    def test_a_package_is_a_name_not_a_url_or_file(self):
+        for name in ("https://example.com/x.pkg.tar.zst", "../x.pkg.tar.zst", "aur/x"):
+            with self.assertRaisesRegex(RecipeError, "needs a package name"):
+                self.load(f'[[package]]\nname = "{name}"\n')
+
+
+class InstallPackagesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.log = root / "pacman.log"
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        # Installed: present-pkg. In a repository: repo-pkg (omarchy). Neither: aur-pkg.
+        (bin_dir / "pacman").write_text(
+            '#!/bin/bash\necho "$*" >> "$PACMAN_LOG"\n'
+            'case $1 in\n'
+            '  -Q) [[ $3 == present-pkg ]] ;;\n'
+            '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
+            '  -S) exit 0 ;;\n'
+            'esac\n')
+        (bin_dir / "pacman").chmod(0o755)
+        self.saved = dict(os.environ)
+        os.environ.update({"PATH": f"{bin_dir}:{os.environ['PATH']}", "PACMAN_LOG": str(self.log)})
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.saved)
+        self.tmp.cleanup()
+
+    def installs(self):
+        return [l for l in self.log.read_text().splitlines() if l.startswith("-S ")] if self.log.exists() else []
+
+    def test_installs_only_what_is_missing_from_a_repository(self):
+        from umami.system import install_packages
+        self.assertTrue(install_packages([{"name": "present-pkg"}, {"name": "repo-pkg"}]))
+        self.assertEqual(self.installs(), ["-S --needed --noconfirm -- repo-pkg"])
+
+    def test_a_package_in_no_repository_installs_nothing(self):
+        from umami.system import install_packages
+        self.assertFalse(install_packages([{"name": "repo-pkg"}, {"name": "aur-pkg"}]))
+        self.assertEqual(self.installs(), [])

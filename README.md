@@ -82,7 +82,7 @@ A flavor is declarative unless its `[flavor]` table says `code = true`. Declarat
 - `bind.remove`, and `bind.add`/`bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
 - `shell.plugins.remove` of bar widgets, panels, overlays and menus (not services such as the lock screen)
 - `plugin.hypr`: load a Hyprland Lua file that one of the recipe's own plugins ships (`plugin = "<id>"`, `file = "hypr/x.lua"`), from the user's install of it. It loads only if the user said yes to the plugin, runs as that user inside Hyprland, never as root, and the code is the plugin's, not the flavor's
-- `[defaults]` and `[[plugin]]`
+- `[defaults]`, `[[plugin]]`, `[[package]]` and `[[suite]]`
 
 Everything else runs code someone wrote: diffs, patches, replaced or wrapped commands, added or removed files, raw Lua, a binding to `run` a shell command or to raw `lua`, removing a service. Such a recipe must say `code = true`, and `plan` prints its tier. The composed Omarchy also runs through sudo, so a flavor that runs code is trusted like a package: install it from a signed package, never from a bare URL.
 
@@ -98,6 +98,25 @@ index = 0
 ```
 
 Plugins from the marketplace never go into the composed tree. A plugin there is first-party, and the shell grants a first-party plugin every capability its manifest declares; as a user plugin it gets none (a `clonedFrom` replacement inherits only what the stock part it replaces has). So `umami user-sync` installs them for each user, as `omarchy plugin add` would. Nothing is installed without the user's yes: at login, plugins they haven't decided on open a terminal with Omarchy's own plugin warning and a Yes/No question (`user-sync --review`), and a no is remembered. Then it checks the URL with `omarchy-git-url-check`, clones the repo, checks out exactly the pinned commit, checks the manifest id, runs `omarchy-plugin-validate`, moves it into `~/.config/omarchy/plugins`, and enables it with the placement on first install. `flavor.lua` runs it at login. Its state file (`~/.local/state/umami/plugins.json`) means a plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what it installed.
+
+## Packages and plugin suites
+
+```toml
+[[package]]
+name = "shibumi-shell"            # from a pacman repository this machine already uses
+
+[[suite]]
+id = "shibumi"
+package = "shibumi-shell"         # one of this recipe's [[package]]s
+command = "shibumi-shell"         # must belong to that package
+install = ["install", "--yes"]
+update = ["update", "--yes"]      # when the package version changes
+uninstall = ["uninstall", "--yes"] # offered when a flavor without it takes over
+```
+
+Some shells and plugin sets ship as a pacman package with their own installer, which stages many plugins at once. `sudo umami flavor` installs a recipe's `[[package]]`s before it changes anything else, and only from a repository in `pacman.conf`, which pacman checks signatures for; a name that no repository has fails the switch and leaves the current flavor as it was. Never the AUR, a file or a URL. Packages stay when another flavor takes over, since other software may need them.
+
+A `[[suite]]` is that package's installer, run by `umami user-sync` as each user. It is asked about together with the flavor's plugins, under Omarchy's plugin warning, and nothing runs before a yes. The command has to be owned by the named package (`pacman -Qo`), so the code that runs is the package's; the recipe only names its steps, as plain arguments. After a package update changes the version, the next login runs `update`. Switching to a flavor without the suite offers its `uninstall` once, like leftover plugins. Both tables are declarative.
 
 ## Defaults
 
@@ -153,6 +172,7 @@ Locked transforms go in `default/hypr/flavor-locked.lua`, loaded at the end of `
 | Flavor | Shows |
 | --- | --- |
 | [`examples/zen`](examples/zen/recipe.toml) | Defaults only: settings, a quieter bar the user can change back, many binding changes, two marketplace plugins |
+| [`examples/shibumi`](examples/shibumi/recipe.toml) | A whole shell from a package: HANCORE's Shibumi Shell through `[[package]]` and `[[suite]]`, with a matching window look and theme |
 | [`examples/company`](examples/company/recipe.toml) | Locks: a theme put back at every login, keys and a setting the user can't override, a widget that isn't there |
 | [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Declarative: four marketplace plugins wired to keys (one loads its own Hyprland file through `plugin.hypr`, one replaces the lock screen), a Mac-style bar and look, a light theme |
 | [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |

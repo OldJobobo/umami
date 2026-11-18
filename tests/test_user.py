@@ -354,7 +354,7 @@ class UserLayerTest(unittest.TestCase):
 
     def test_saying_no_keeps_the_plugin_away(self):
         original = user.ask
-        user.ask = lambda recipe, pending: False
+        user.ask = lambda recipe, pending, suites=(): False
         try:
             self.assertEqual(self.sync(self.first, assume_yes=False, interactive=True), 0)
         finally:
@@ -368,7 +368,7 @@ class UserLayerTest(unittest.TestCase):
     def test_saying_yes_installs_it(self):
         asked = []
         original = user.ask
-        user.ask = lambda recipe, pending: asked.append([p["id"] for p in pending]) or True
+        user.ask = lambda recipe, pending, suites=(): asked.append([p["id"] for p in pending]) or True
         try:
             self.assertEqual(self.sync(self.first, assume_yes=False, interactive=True), 0)
         finally:
@@ -404,3 +404,118 @@ class UserLayerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SuiteTest(unittest.TestCase):
+    """[[suite]]: a package's own plugin installer, run as the user."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.home = root / "home"
+        self.home.mkdir()
+        self.log = root / "calls.log"
+        self.log.touch()
+        self.version = root / "version"
+        self.version.write_text("0.2.4-1")
+        self.owner = root / "owner"
+        self.owner.write_text("shibumi-shell")
+        fakes, self.pkgbin = root / "bin", root / "usr-bin"
+        fakes.mkdir()
+        self.pkgbin.mkdir()
+        bodies = dict(FAKES)
+        bodies["pacman"] = ('case $1 in -Q) [[ -s "$FAKE_VERSION" ]] && echo "$3 $(cat "$FAKE_VERSION")" || exit 1 ;; '
+                            '-Qqo) cat "$FAKE_OWNER" ;; esac')
+        for name, body in bodies.items():
+            (fakes / name).write_text("#!/bin/bash\n" + body + "\n")
+            (fakes / name).chmod(0o755)
+        suite = self.pkgbin / "shibumi-shell"
+        suite.write_text('#!/bin/bash\necho "suite $* timeout=$OMARCHY_SHELL_IPC_TIMEOUT" >> "$FAKE_LOG"\n')
+        suite.chmod(0o755)
+        self.saved_env, self.saved_path = dict(os.environ), user.SUITE_PATH
+        user.SUITE_PATH = str(self.pkgbin)
+        os.environ.update({"HOME": str(self.home), "PATH": f"{fakes}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
+                           "FAKE_VERSION": str(self.version), "FAKE_OWNER": str(self.owner)})
+        for key in ("XDG_STATE_HOME", "XDG_CACHE_HOME"):
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.saved_env)
+        user.SUITE_PATH = self.saved_path
+        self.tmp.cleanup()
+
+    def recipe(self, name="shibumi", suite=True):
+        path = Path(self.tmp.name) / name / "recipe.toml"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(f'''
+[flavor]
+name = "{name}"
+''' + ('''
+[[package]]
+name = "shibumi-shell"
+
+[[suite]]
+id = "shibumi"
+package = "shibumi-shell"
+command = "shibumi-shell"
+install = ["install", "--yes"]
+update = ["update", "--yes"]
+uninstall = ["uninstall", "--yes"]
+''' if suite else '''
+[defaults]
+theme = "Solitude"
+'''))
+        return path
+
+    def calls(self):
+        return [c for c in self.log.read_text().splitlines() if c.startswith("suite")]
+
+    def test_installs_once_then_updates_when_the_package_changes(self):
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 0)
+        self.assertEqual(self.calls(), ["suite install --yes timeout=30s"])
+        self.log.write_text("")
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1), 0)  # a later login
+        self.assertEqual(self.calls(), [])
+        self.version.write_text("0.2.5-1")  # omarchy update brought a new package
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1), 0)
+        self.assertEqual(self.calls(), ["suite update --yes timeout=30s"])
+
+    def test_nothing_runs_before_the_user_says_yes(self):
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1), 0)
+        self.assertEqual(self.calls(), [])
+        self.assertIn("review /usr/lib/umami/bin/umami user-sync --review", self.log.read_text())
+
+    def test_saying_no_keeps_it_away(self):
+        original = user.ask
+        user.ask = lambda recipe, pending, suites=(): False
+        try:
+            self.assertEqual(user.sync(self.recipe(), shell_timeout=1, interactive=True), 0)
+        finally:
+            user.ask = original
+        self.version.write_text("0.2.5-1")
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1), 0)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_command_its_package_does_not_own_is_not_run(self):
+        self.owner.write_text("something-else")
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 1)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_missing_package_is_reported(self):
+        self.version.write_text("")
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 1)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_flavor_without_it_offers_its_uninstall(self):
+        self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 0)
+        self.log.write_text("")
+        asked, original = [], user.ask_leftovers
+        user.ask_leftovers = lambda recipe, state, ids: asked.append(ids) or True
+        try:
+            self.assertEqual(user.sync(self.recipe("zen", suite=False), shell_timeout=1, interactive=True), 0)
+        finally:
+            user.ask_leftovers = original
+        self.assertEqual(asked, [["suite:shibumi"]])
+        self.assertEqual(self.calls(), ["suite uninstall --yes timeout=30s"])
+        self.assertNotIn("suite:shibumi", user.load_state())

@@ -5,7 +5,10 @@ data the compositor checks and turns into configuration itself, the way
 Omarchy treats a theme: appearance and layout settings, bindings to a short
 list of actions, removing bar widgets and panels, and the [defaults], [locked] and
 [[plugin]] tables (plugins go through Omarchy's own validation and the user's
-consent). Nothing in them is run as written.
+consent). Nothing in them is run as written. [[package]] and [[suite]] are
+declarative too: a package comes only from a pacman repository the machine
+already trusts, and a suite runs that package's own installer, as the user,
+after the user's yes.
 
 plugin.hypr is declarative too: it loads a Hyprland Lua file shipped by one
 of the recipe's own plugins, from that user's install, only if the user said

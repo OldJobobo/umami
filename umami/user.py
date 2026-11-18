@@ -300,16 +300,26 @@ def save_defaults(applied: dict):
     path.write_text(json.dumps(applied, indent=2, sort_keys=True) + "\n")
 
 
-def ask(recipe, pending: list) -> bool:
+def ask(recipe, pending: list, suites: list = ()) -> bool:
     """Show Omarchy's plugin warning and the plugins, and ask once for all."""
-    print(f"The {recipe.name} flavor adds these plugins from the Omarchy marketplace:\n")
+    if pending:
+        print(f"The {recipe.name} flavor adds these plugins from the Omarchy marketplace:\n")
     for plugin in pending:
         print(f"  {plugin['id']}")
         if plugin.get("note"):
             print(f"      {plugin['note']}")
         print(f"      {plugin['repo']} @ {plugin['commit'][:12]}\n")
+    if suites:
+        print(f"The {recipe.name} flavor installs {'this plugin suite' if len(suites) == 1 else 'these plugin suites'} "
+              "into your shell, with the package's own installer:\n")
+    for suite in suites:
+        print(f"  {suite['id']}")
+        if suite.get("note"):
+            print(f"      {suite['note']}")
+        print(f"      {suite['command']} {' '.join(suite['install'])}  (from the {suite['package']} package)\n")
     print("⚠️  " + WARNING.replace("\n", "\n  ") + "\n")
-    prompt = f"Add {'this plugin' if len(pending) == 1 else 'these plugins'}?"
+    count = len(pending) + len(suites)
+    prompt = f"Add {'it' if count == 1 else 'them'}?"
     if shutil.which("gum") and os.isatty(0):
         return run_tty(["gum", "confirm", "--default=false", prompt]) == 0
     try:
@@ -323,9 +333,23 @@ def leftovers(recipe, state: dict) -> list:
     the previous flavor, or dropped by a new release. Ones the user installed
     themselves, or chose to keep, are never listed."""
     wanted = {p["id"] for p in recipe.plugins}
-    return sorted(pid for pid, known in state.items()
-                  if isinstance(known, dict) and known.get("commit") and not known.get("kept")
-                  and pid not in wanted and (plugins_dir() / pid).exists())
+    plugins = [pid for pid, known in state.items()
+               if isinstance(known, dict) and known.get("commit") and not known.get("kept")
+               and pid not in wanted and (plugins_dir() / pid).exists()]
+    wanted_suites = {suite_key(s) for s in recipe.suites}
+    suites = [key for key, known in state.items()
+              if key.startswith("suite:") and isinstance(known, dict) and known.get("version")
+              and not known.get("kept") and key not in wanted_suites]
+    return sorted(plugins) + sorted(suites)
+
+
+def suite_key(suite: dict) -> str:
+    return f"suite:{suite['id']}"
+
+
+def label(key: str, state: dict) -> str:
+    known = state.get(key) or {}
+    return f"{key[6:]} (the {known.get('package')} suite)" if key.startswith("suite:") else key
 
 
 def ask_leftovers(recipe, state: dict, ids: list) -> bool:
@@ -334,7 +358,7 @@ def ask_leftovers(recipe, state: dict, ids: list) -> bool:
     print(f"{origin[0].upper() + origin[1:]} added {'this plugin' if len(ids) == 1 else 'these plugins'}, "
           f"which {recipe.name} doesn't use:\n")
     for pid in ids:
-        print(f"  {pid}")
+        print(f"  {label(pid, state)}")
     print("\nPlugins you installed yourself are not touched. Keep them, and they become yours.\n")
     prompt = f"Remove {'it' if len(ids) == 1 else 'them'}?"
     if shutil.which("gum") and os.isatty(0):
@@ -350,22 +374,88 @@ def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assum
     if not ids:
         return []
     if dry_run or assume_yes or not interactive:
-        return [f"  leftover  {pid}: from an earlier flavor (user-sync --review asks)" for pid in ids]
+        return [f"  leftover  {label(pid, state)}: from an earlier flavor (user-sync --review asks)" for pid in ids]
     lines = []
     if ask_leftovers(recipe, state, ids):
         for pid in ids:
-            result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
+            if pid.startswith("suite:"):
+                known = state[pid]
+                result = run_shell_call([known["command"], *known["uninstall"]])
+            else:
+                result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
             if result.returncode == 0:
                 state.pop(pid, None)
-                lines.append(f"  removed   {pid}")
+                lines.append(f"  removed   {label(pid, state) if pid in state else pid}")
             else:
                 lines.append(f"  FAILED    removing {pid}: " + (result.stderr or result.stdout).strip()[:200])
     else:
         for pid in ids:
             state[pid]["kept"] = True
-            lines.append(f"  kept      {pid}: yours now")
+            lines.append(f"  kept      {label(pid, state)}: yours now")
     save_state(state)
     return lines
+
+
+def package_version(name: str) -> str:
+    """The installed version of a pacman package, or "" when it isn't."""
+    out = run(["pacman", "-Q", "--", name])
+    parts = out.stdout.split()
+    return parts[1] if out.returncode == 0 and len(parts) == 2 else ""
+
+
+SUITE_PATH = "/usr/bin:/usr/local/bin"
+
+
+def suite_command(suite: dict) -> str:
+    """The suite's command, only if its package owns it: the code that runs
+    is the package's, which pacman installed from a trusted repository."""
+    path = shutil.which(suite["command"], path=SUITE_PATH)
+    if not path:
+        raise PluginError(f"{suite['command']} is not installed")
+    owner = run(["pacman", "-Qqo", "--", path]).stdout.strip()
+    if owner != suite["package"]:
+        raise PluginError(f"{path} belongs to {owner or 'no package'}, not {suite['package']}")
+    return path
+
+
+def sync_suite(recipe, suite, state, dry_run, interactive, shell_ready, shell_timeout):
+    """Install a suite once the user said yes, and update it when its package
+    changes. Returns (line, ok, shell_ready): ok is True after a change, None
+    when there was nothing to do, False on failure."""
+    sid, key = suite["id"], suite_key(suite)
+    known = state.get(key)
+    if known and known.get("declined"):
+        return f"  skipped   {sid}: you said no", None, shell_ready
+    version = package_version(suite["package"])
+    if not version:
+        return (f"  FAILED    {sid}: the {suite['package']} package is not installed "
+                f"(sudo umami flavor {recipe.name} installs it)"), False, shell_ready
+    if known and known.get("version") == version:
+        return f"  ok        {sid} ({suite['package']} {version})", None, shell_ready
+    action = "update" if known else "install"
+    if dry_run:
+        return f"  would {action:<7} {sid} ({suite['package']} {version})", None, shell_ready
+    try:
+        command = [suite_command(suite), *suite[action]]
+        if shell_ready is None:
+            shell_ready = wait_for_shell(shell_timeout)
+        if not shell_ready:
+            raise PluginError("the shell is not running (run umami user-sync again)")
+        env = {**os.environ, "OMARCHY_SHELL_IPC_TIMEOUT": SHELL_CALL_TIMEOUT}
+        if interactive:
+            # In the review terminal: the installer's own output is shown.
+            code, why = subprocess.run(command, env=env).returncode, "see its output above"
+        else:
+            result = run(command, env=env)
+            code, why = result.returncode, (result.stderr or result.stdout).strip()[-300:]
+        if code != 0:
+            raise PluginError(f"{' '.join(command)} failed: {why}")
+    except PluginError as error:
+        return f"  FAILED    {sid}: {error}", False, shell_ready
+    state[key] = {"suite": True, "package": suite["package"], "version": version, "command": command[0],
+                  "uninstall": suite["uninstall"], "flavor": recipe.name}
+    save_state(state)
+    return f"  {action + 'ed' if action == 'install' else 'updated':<9} {sid} ({suite['package']} {version})", True, shell_ready
 
 
 def run_tty(command) -> int:
@@ -405,7 +495,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
     recipe = load(recipe_path)
     state = load_state()
     left = leftovers(recipe, state)
-    if not recipe.plugins and not recipe.defaults and not recipe.locked and not left:
+    if not recipe.plugins and not recipe.suites and not recipe.defaults and not recipe.locked and not left:
         return 0
     lines, failed, installed = [], 0, []
     shell_ready = None
@@ -413,25 +503,39 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
     # The plugins nobody has said yes or no to yet.
     pending = [p for p in recipe.plugins if not state.get(p["id"])
                and not ((plugins_dir() / p["id"]).exists() or (plugins_dir() / p["id"]).is_symlink())]
+    pending_suites = [x for x in recipe.suites if not state.get(suite_key(x))]
     deferred = set()
-    if left and not pending and not dry_run and not assume_yes and not interactive:
+    if left and not pending and not pending_suites and not dry_run and not assume_yes and not interactive:
         # Nothing to install, but something to tidy: ask in the same terminal.
         opened = open_review()
         lines.append("  waiting   for your answer about plugins from an earlier flavor"
                      + ("" if opened else f" (run {SELF} user-sync --review)"))
         left = []
-    if pending and not dry_run and not assume_yes:
+    if (pending or pending_suites) and not dry_run and not assume_yes:
         if interactive:
-            if not ask(recipe, pending):
+            if not ask(recipe, pending, pending_suites):
                 for plugin in pending:
                     state[plugin["id"]] = {"declined": True, "flavor": recipe.name}
+                for suite in pending_suites:
+                    state[suite_key(suite)] = {"declined": True, "flavor": recipe.name}
                 save_state(state)
         else:
-            deferred = {p["id"] for p in pending}
+            deferred = {p["id"] for p in pending} | {suite_key(x) for x in pending_suites}
             left = []  # the review terminal asks about these too
             opened = open_review()
-            lines.append("  waiting   for your OK: " + ", ".join(sorted(deferred))
+            lines.append("  waiting   for your OK: " + ", ".join(sorted(d.removeprefix("suite:") for d in deferred))
                          + ("" if opened else f" (run {SELF} user-sync --review)"))
+
+    for suite in recipe.suites:
+        key = suite_key(suite)
+        if key in deferred:
+            continue
+        line, ok, shell_ready = sync_suite(recipe, suite, state, dry_run, interactive, shell_ready, shell_timeout)
+        lines.append(line)
+        if ok is False:
+            failed += 1
+        elif ok:
+            installed.append(suite["id"])
 
     for plugin in recipe.plugins:
         pid = plugin["id"]

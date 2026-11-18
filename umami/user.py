@@ -355,8 +355,9 @@ def label(key: str, state: dict) -> str:
 def ask_leftovers(recipe, state: dict, ids: list) -> bool:
     flavors = sorted({state[pid].get("flavor") or "an earlier" for pid in ids} - {recipe.name})
     origin = f"the {', '.join(flavors)} flavor" if flavors else "an earlier release of this flavor"
-    print(f"{origin[0].upper() + origin[1:]} added {'this plugin' if len(ids) == 1 else 'these plugins'}, "
-          f"which {recipe.name} doesn't use:\n")
+    suites = any(pid.startswith("suite:") for pid in ids)
+    what = ("this plugin suite" if suites else "this plugin") if len(ids) == 1 else "these"
+    print(f"{origin[0].upper() + origin[1:]} added {what}, which {recipe.name} doesn't use:\n")
     for pid in ids:
         print(f"  {label(pid, state)}")
     print("\nPlugins you installed yourself are not touched. Keep them, and they become yours.\n")
@@ -384,8 +385,9 @@ def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assum
             else:
                 result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
             if result.returncode == 0:
+                name = label(pid, state)
                 state.pop(pid, None)
-                lines.append(f"  removed   {label(pid, state) if pid in state else pid}")
+                lines.append(f"  removed   {name}")
             else:
                 lines.append(f"  FAILED    removing {pid}: " + (result.stderr or result.stdout).strip()[:200])
     else:

@@ -256,7 +256,7 @@ def flavor(flavor: str) -> int:
     code = recompose()
     if code != 0:
         return code
-    enable(quiet=bool(live))
+    enable(quiet=True)  # what happens next is said below
     if live and switch_live(*live):
         print(f"Switched live for {live[0]}: Hyprland and the shell reload now, without a reboot.")
     else:

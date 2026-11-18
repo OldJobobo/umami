@@ -507,6 +507,18 @@ theme = "Solitude"
         self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 1)
         self.assertEqual(self.calls(), [])
 
+    def test_the_removed_suite_is_named_plainly(self):
+        state = {"suite:shibumi": {"package": "shibumi-shell", "version": "1", "uninstall": ["uninstall", "--yes"],
+                                   "command": str(self.pkgbin / "shibumi-shell"), "flavor": "shibumi"}}
+        original = user.ask_leftovers
+        user.ask_leftovers = lambda recipe, state, ids: True
+        try:
+            lines = user.tidy(user.load(self.recipe("zen", suite=False)), state, ["suite:shibumi"],
+                              dry_run=False, interactive=True, assume_yes=False)
+        finally:
+            user.ask_leftovers = original
+        self.assertEqual(lines, ["  removed   shibumi (the shibumi-shell suite)"])
+
     def test_a_flavor_without_it_offers_its_uninstall(self):
         self.assertEqual(user.sync(self.recipe(), shell_timeout=1, assume_yes=True), 0)
         self.log.write_text("")

@@ -191,6 +191,18 @@ class UserLayerTest(unittest.TestCase):
         self.assertEqual(user.sync(path, shell_timeout=1), 0)
         self.assertNotIn("bar", self.log.read_text())
 
+    def test_shell_calls_wait_longer_than_omarchy_shells_default(self):
+        # Just after a shell restart, a call can take more than the 2s
+        # omarchy-shell allows by default although it runs.
+        for name in ("omarchy-plugin-disable", "omarchy-bar"):
+            fake = Path(self.tmp.name) / "bin" / name
+            fake.write_text('#!/bin/bash\n[[ $OMARCHY_SHELL_IPC_TIMEOUT == 30s ]] || '
+                            '{ echo "omarchy-shell is not responding" >&2; exit 1; }\n')
+        self.recipe_dir.mkdir(exist_ok=True)
+        path = self.recipe_dir / "recipe.toml"
+        path.write_text(self.BAR)
+        self.assertEqual(user.sync(path, shell_timeout=1), 0)
+
     def test_bar_sections_are_checked(self):
         self.recipe_dir.mkdir(exist_ok=True)
         path = self.recipe_dir / "recipe.toml"

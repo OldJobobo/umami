@@ -81,6 +81,17 @@ def run(command, **kwargs):
     return subprocess.run(command, capture_output=True, text=True, **kwargs)
 
 
+# omarchy-shell gives a call 2s by default. Right after a login or a shell
+# restart the shell can take longer than that to answer, so a plugin enable
+# or a bar change reported "not responding" although it ran. A call that
+# timed out may have run, so it can't be retried; it gets longer instead.
+SHELL_CALL_TIMEOUT = "30s"
+
+
+def run_shell_call(command):
+    return run(command, env={**os.environ, "OMARCHY_SHELL_IPC_TIMEOUT": SHELL_CALL_TIMEOUT})
+
+
 def fetch(plugin: dict) -> Path:
     """Clone `repo` at exactly `commit` into a staging folder, validated."""
     cache_dir().mkdir(parents=True, exist_ok=True)
@@ -129,9 +140,9 @@ def wait_for_shell(timeout: float) -> bool:
 
 
 def enable(plugin: dict):
-    run(["omarchy-shell", "shell", "rescanPlugins"])
+    run_shell_call(["omarchy-shell", "shell", "rescanPlugins"])
     for _ in range(40):
-        listed = run(["omarchy-plugin-list", "--json"])
+        listed = run_shell_call(["omarchy-plugin-list", "--json"])
         try:
             if any(entry.get("id") == plugin["id"] for entry in json.loads(listed.stdout or "[]")):
                 break
@@ -143,7 +154,7 @@ def enable(plugin: dict):
         command += ["--section", plugin["section"]]
     if plugin.get("index") is not None:
         command += ["--index", str(plugin["index"])]
-    result = run(command)
+    result = run_shell_call(command)
     if result.returncode != 0:
         raise PluginError("omarchy-plugin-enable failed: " + (result.stderr or result.stdout).strip()[:300])
 
@@ -237,7 +248,7 @@ def command_key(command: list) -> str:
 
 
 def set_theme(theme: str):
-    result = run(["omarchy-theme-set", theme])
+    result = run_shell_call(["omarchy-theme-set", theme])
     if result.returncode != 0:
         raise PluginError(f"theme {theme}: " + (result.stderr or result.stdout).strip()[:300])
 
@@ -252,7 +263,7 @@ def run_bar(commands: list, shell_timeout: float):
     if not wait_for_shell(shell_timeout):
         raise PluginError("bar layout: the shell is not running (run umami user-sync again)")
     for command in commands:
-        result = run(command)
+        result = run_shell_call(command)
         # A widget this Omarchy doesn't have is already off the bar.
         if result.returncode != 0 and command[0] == "omarchy-plugin-disable" and "is not known" in result.stderr:
             continue
@@ -333,7 +344,7 @@ def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assum
     lines = []
     if ask_leftovers(recipe, state, ids):
         for pid in ids:
-            result = run(["omarchy-plugin-remove", pid, "--yes"])
+            result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
             if result.returncode == 0:
                 state.pop(pid, None)
                 lines.append(f"  removed   {pid}")
@@ -455,7 +466,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
                     raise PluginError("installed, but the shell is not running to enable it (run user-sync again, or omarchy plugin enable)")
                 enable(plugin)
             else:
-                run(["omarchy-shell", "shell", "rescanPlugins"])
+                run_shell_call(["omarchy-shell", "shell", "rescanPlugins"])
             installed.append(pid)
             lines.append(f"  {action + 'ed' if action == 'install' else 'updated':<9} {pid} @ {plugin['commit'][:12]}")
         except PluginError as error:

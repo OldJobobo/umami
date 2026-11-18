@@ -1,6 +1,6 @@
 post_install() {
   echo "Pick a flavor to start: sudo umami flavor zen"
-  echo "Flavors: /usr/share/umami/flavors (or a directory with your own recipe.toml)"
+  echo "Flavors: yours in ~/.config/umami/flavors, then /usr/share/umami/flavors"
 }
 
 pre_remove() {

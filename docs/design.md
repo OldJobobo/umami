@@ -6,7 +6,7 @@ Draft, begun 2026-11-16. This is the design umami was built from, kept for its r
 
 A flavor is a recipe of changes that is re-applied automatically to whatever the newest Omarchy is. Users always run current upstream, with the flavor on top, and nobody forks, rebases or freezes a file.
 
-Umami Flavors is an unofficial add-on, and its command is `umami`. The Omarchy name is kept for official Omarchy features.
+Umami Flavors is an unofficial add-on, and its command is `umami`.
 
 The key move is to express changes as **transforms**, not copies. An override copies an upstream file and freezes it, so upstream fixes to that file stop arriving. A transform is an instruction, for example "bind Super+Return to foot". It is re-run against each new upstream release, so every upstream change flows through and the modification rides on top.
 
@@ -310,7 +310,7 @@ The prototype proves the runtime tier locally, with no upstream change and no pa
 - **Upstream.** **Decided:** build first. Upstream hears about it with the marker PR, once the prototype works.
 - **Audience.** **Decided:** a personal flavor first. The package tier (CI, signed repo, stacking) is deferred until someone else wants to use it.
 - **Existing customisations.** **Decided:** current plugins, hooks and Hyprland overrides in `~/.config` stay where they are. The flavor holds only what changes Omarchy itself.
-- **Name.** **Decided:** a recipe is a "flavor". The project is **Umami Flavors** and its command is `umami` (2026-11-17), because the Omarchy name is kept for official Omarchy features. If upstream adopts flavors, they can take an Omarchy name then.
+- **Name.** **Decided:** a recipe is a "flavor". The project is **Umami Flavors** and its command is `umami` (2026-11-17).
 - **Recipe format and compositor.** **Decided:** recipes are TOML, the format Omarchy already uses, and the compositor is Python using only its standard library, which reads TOML natively. Stock Omarchy needs nothing extra. The YAML example above shows the idea; the README has the real syntax.
 - **Security.** **Decided:** flavors are declarative by default, in line with Omarchy's no-code-in-themes stance. Code transforms need `code = true` and are trusted like a package. Third-party plugins stay out of the root tree and go through consent and `omarchy-git-url-check`.
 - **Standalone.** **Decided:** the flavor deploys without the upstream PR, through built-in patches; the PR stays the clean fix.

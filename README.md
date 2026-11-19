@@ -4,7 +4,7 @@ Make Omarchy your own without forking it. A flavor is a recipe of changes: setti
 
 Each change targets something by meaning, such as a setting's path, a key chord or a line of code, and checks that it is still there. When an update moves something a change depends on, umami skips that one change, tells you, and applies the rest.
 
-umami is an unofficial add-on: the Omarchy name is kept for official Omarchy features. It is a prototype. It has been verified in a VM on Omarchy 4.5.0 stable (install, desktop, shell, updates, falling back to stock, uninstall), from the package, and across a switch from stable 4.5.0 to edge. It has not yet been tested across a stable release bump.
+umami is an unofficial add-on for Omarchy, and a prototype. It has been verified in a VM on Omarchy 4.5.0 stable (install, desktop, shell, updates, falling back to stock, uninstall), from the package, and across a switch from stable 4.5.0 to edge. It has not yet been tested across a stable release bump.
 
 ## Install
 

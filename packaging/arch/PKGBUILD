@@ -21,7 +21,7 @@ package() {
   ln -s /usr/lib/umami/bin/umami "$pkgdir/usr/bin/umami"
   install -Dm644 system/90-umami.hook "$pkgdir/usr/share/libalpm/hooks/90-umami.hook"
 
-  # The shareable flavors. A personal one (examples/jobo) stays out.
+  # The example flavors.
   local flavor
   for flavor in zen shibumi command-palette mac-switcher company; do
     install -d "$pkgdir/usr/share/umami/flavors/$flavor"

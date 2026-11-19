@@ -9,7 +9,7 @@ Status: prototype. The dry run works, and a flavor runs live: verified in a VM o
 ## Install on a machine (prototype)
 
 ```bash
-./install.sh examples/jobo      # compositor -> /usr/lib/umami, recipe -> /etc/umami,
+./install.sh examples/zen       # compositor -> /usr/lib/umami, recipe -> /etc/umami,
                                 # pacman hook, compose, point Omarchy at the tree; reboot after
 ./uninstall.sh                  # back to stock from the next boot
 ```
@@ -33,10 +33,10 @@ The tree carries a `.git` with no upstream so `omarchy-update-dev` skips it inst
 ## Dry run
 
 ```bash
-bin/umami plan examples/jobo/recipe.toml            # compose into a scratch dir and say what the flavor does
-bin/umami plan examples/jobo/recipe.toml --files    # also list the files that differ from stock
-bin/umami plan examples/jobo/recipe.toml --diff     # and show the changes themselves
-bin/umami compose examples/jobo/recipe.toml --out DIR
+bin/umami plan examples/zen/recipe.toml            # compose into a scratch dir and say what the flavor does
+bin/umami plan examples/zen/recipe.toml --files    # also list the files that differ from stock
+bin/umami plan examples/zen/recipe.toml --diff     # and show the changes themselves
+bin/umami compose examples/zen/recipe.toml --out DIR
 ```
 
 `--source` picks the Omarchy tree to compose onto (default `/usr/share/omarchy`). Nothing outside the destination is written.
@@ -244,7 +244,6 @@ Locked transforms go in `default/hypr/flavor-locked.lua`, loaded at the end of `
 | [`examples/company`](examples/company/recipe.toml) | Locks: a theme put back at every login, keys and a setting the user can't override, a widget that isn't there |
 | [`examples/mac-switcher`](examples/mac-switcher/recipe.toml) | Declarative: four marketplace plugins wired to keys (one loads its own Hyprland file through `plugin.hypr`, one replaces the lock screen), a Mac-style bar and look, a light theme |
 | [`examples/command-palette`](examples/command-palette/recipe.toml) | Replacing the Omarchy menu with a marketplace plugin, no Omarchy file changed |
-| [`examples/jobo`](examples/jobo/recipe.toml) | Carrying open pull requests as diffs, a version per Omarchy line |
 
 ## How it composes
 

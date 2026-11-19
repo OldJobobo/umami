@@ -2,7 +2,7 @@
 
 # Install umami and a recipe on this machine (prototype installer).
 #
-#   ./install.sh examples/jobo
+#   ./install.sh examples/zen
 #
 # Copies the compositor to /usr/lib/umami, the recipe directory to
 # /etc/umami, the pacman hook to /etc/pacman.d/hooks, composes the

@@ -272,15 +272,22 @@ Eight shell actions call `omarchyPath + "/bin/..."` directly (clipboard, emoji i
 
 ## Upstream asks
 
-One small PR to `omacom/omarchy` is needed: a third mode beside "packaged" and "dev checkout", recognised by a marker such as `OMARCHY_FLAVOR=<name>` in `/etc/omarchy.conf`. Today every script assumes a non-stock `OMARCHY_PATH` is a git checkout.
+One small PR to `omacom/omarchy` is needed: an `OMARCHY_PATH_TYPE` line in `/etc/omarchy.conf`, beside the `OMARCHY_PATH` line it describes. Today Omarchy guesses the kind of path: `/usr/share/omarchy` is the package and anything else is a git checkout. A composed tree is neither.
 
-| Script | Today, with a non-stock path | With the marker |
+```sh
+export OMARCHY_PATH="/var/lib/umami/tree"
+export OMARCHY_PATH_TYPE="flavor"   # package, dev or flavor
+```
+
+`omarchy dev link` would write `dev` and unlink would write `package`, so scripts check the type instead of comparing the path. Unset means today's guess, so existing installs and dev links keep working. The flavor's name stays out of Omarchy; umami's report records it.
+
+| Script | Today, with a non-stock path | With `OMARCHY_PATH_TYPE=flavor` |
 | --- | --- | --- |
 | `bin/omarchy-update-dev` | Exits 1 if the tree is not a git checkout, which aborts `omarchy update` | Exits 0: the package upgrade already recomposed the tree |
-| `bin/omarchy-channel-set` | Treats the switch as "leaving dev" and resets `/etc/omarchy.conf`, so the flavor is silently dropped | Keeps the flavor marker and path across channel switches |
-| `bin/omarchy-channel-current` | Reports `dev` | Reports the package channel, plus the flavor name |
+| `bin/omarchy-channel-set` | Treats the switch as "leaving dev" and resets `/etc/omarchy.conf`, so the flavor is silently dropped | Keeps the path and its type across channel switches |
+| `bin/omarchy-channel-current` | Reports `dev` | Reports the package channel |
 
-Until that lands, the flavor works without it. The compositor applies seven **built-in patches** to its own copy of these scripts, so they treat the composed tree as a package install: `omarchy-channel-set` keeps the flavor across a channel switch (three patches: no "leaving dev" reset, no unlink back to stock, and the update after the switch runs from the tree), `omarchy-channel-current`, `omarchy-version` and `omarchy-version-branch` report stable or edge instead of dev, and `omarchy-update-dev` skips the tree. Each is an exact one-line match on stable 4.5.0 and edge. One that stops matching is reported by `plan` and never fails the composition, and the marker PR would make all seven unnecessary.
+Until that lands, the flavor works without it. The compositor applies seven **built-in patches** to its own copy of these scripts, so they treat the composed tree as a package install: `omarchy-channel-set` keeps the flavor across a channel switch (three patches: no "leaving dev" reset, no unlink back to stock, and the update after the switch runs from the tree), `omarchy-channel-current`, `omarchy-version` and `omarchy-version-branch` report stable or edge instead of dev, and `omarchy-update-dev` skips the tree. Each is an exact one-line match on stable 4.5.0 and edge. One that stops matching is reported by `plan` and never fails the composition, and the `OMARCHY_PATH_TYPE` PR would make all seven unnecessary.
 
 It is easier to argue for the PR with a working prototype behind it, so the PR comes after the prototype.
 
@@ -298,7 +305,7 @@ The prototype proves the runtime tier locally, with no upstream change and no pa
 - [x] **Standalone package.** Built and tested in a fresh VM (2026-11-17): `pacman -U` the umami 0.1.0 package, `sudo umami flavor zen`, reboot. Omarchy ran from the composed tree, version and channel read stable, and consent, theme and bar applied at login.
 - [x] **Defaults and locks.** Built and checked in the VM on 4.5.0 stable (2026-11-17). Company flavor: the locked theme came back at the next login after the user picked Nord, and a user's `rounding = 12` and Alt+Print binding lost to the locks, while their unlocked `gaps_out = 20` applied. Zen: the world clock, weather and agents widgets are hidden, not removed; turning the world clock back on worked and it stayed on through the next login. The bar default is tracked entry by entry. On a second machine since 2026-11-17, running Zen on edge.
 - [x] **Move the author's main machine onto the flavor.** Once a real update survives in the VM: decide together, then run omarchy dev unlink, install the flavor, and reboot. The update's snapper snapshot is the rollback point. Omarchy PR testing moves to the VM or a temporary re-link. Done: it runs a personal flavor from the composed tree, with open Omarchy pull requests carried as `diff` transforms.
-- [ ] **Upstream PR.** Propose the flavor-mode marker, with the prototype as evidence.
+- [ ] **Upstream PR.** Propose `OMARCHY_PATH_TYPE`, with the prototype as evidence.
 - [ ] **Package tier.** Deferred until someone else wants the flavor: the CI respin, the repo and stacking. Path when it comes: a pacman package on a GitHub release first, then a submission to the Omarchy package repo (OPR) if it catches on.
 
 ## Decisions
@@ -307,7 +314,7 @@ The prototype proves the runtime tier locally, with no upstream change and no pa
 - **Personal recipe trust.** The compositor runs as root, but a personal layer lives in a user's home directory. **Decided:** root reads only a root-owned copy in `/etc/umami/`, installed by `umami apply`, and a flavor is machine-wide (see Distribution and stacking).
 - **Shell.** **Decided:** flavors change the shell by swapping plugins, components or the whole shell, checked against its IPC contract, not by patching QML (see The shell).
 - **Fallback timing.** When a required transform goes stale, falling back to stock only takes effect after a reboot. **Decided:** the session keeps the previous composed tree until reboot, and the update ends with "reboot required".
-- **Upstream.** **Decided:** build first. Upstream hears about it with the marker PR, once the prototype works.
+- **Upstream.** **Decided:** build first. Upstream hears about it with the `OMARCHY_PATH_TYPE` PR, once the prototype works.
 - **Audience.** **Decided:** a personal flavor first. The package tier (CI, signed repo, stacking) is deferred until someone else wants to use it.
 - **Existing customisations.** **Decided:** current plugins, hooks and Hyprland overrides in `~/.config` stay where they are. The flavor holds only what changes Omarchy itself.
 - **Name.** **Decided:** a recipe is a "flavor". The project is **Umami Flavors** and its command is `umami` (2026-11-17).

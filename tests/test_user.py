@@ -28,6 +28,8 @@ FAKES = {
     "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"; [[ $1 != *missing* ]] || { echo "plugin \'$1\' is not known" >&2; exit 1; }',
     "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
     "omarchy-launch-floating-terminal-with-presentation": 'echo "review $*" >> "$FAKE_LOG"',
+    "omarchy-powerprofiles-list": 'printf "power-saver\\nbalanced\\n"',
+    "omarchy-powerprofiles-set": 'echo "profile $*" >> "$FAKE_LOG"',
     "omarchy-font-set": 'echo "font $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.font"',
     "omarchy-font-current": 'cat "$FAKE_LOG.font" 2>/dev/null || echo "JetBrainsMono Nerd Font"',
     "omarchy-webapp-install": 'echo "webapp $*" >> "$FAKE_LOG"; mkdir -p "$HOME/.local/share/applications"; '
@@ -229,6 +231,12 @@ class UserLayerTest(unittest.TestCase):
     with contextlib.redirect_stdout(io.StringIO()):
       user.remove()
     self.assertEqual(self.font(), "Hack")
+
+  def test_a_profile_the_machine_lacks_is_skipped_once(self):
+    recipe = self.settings_recipe('[defaults]\npower_profile = "performance"\n')
+    self.assertEqual(user.sync(recipe, shell_timeout=1), 0)
+    user.sync(recipe, shell_timeout=1)
+    self.assertNotIn("profile", self.log.read_text())
 
   def test_a_locked_font_comes_back_at_every_login(self):
     recipe = self.settings_recipe('[locked]\nfont = "Iosevka"\n')

@@ -419,6 +419,12 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
     if dry_run:
       lines.append(f"  would set {describe(key, value)}")
       continue
+    if key == "power_profile" and value not in run(["omarchy-powerprofiles-list"]).stdout.split():
+      # Not every machine has every profile (a VM may have only two).
+      settings[key] = value
+      save_defaults(applied)
+      lines.append(f"  skipped   power profile {value}: this machine doesn't have it")
+      continue
     mine.setdefault("before", {}).setdefault(key, get_setting(key))
     mine["applied_at"] = time.time()
     try:

@@ -30,7 +30,9 @@ NO_SLEEP = {
     Path("/etc/systemd/logind.conf.d/90-umami-no-sleep.conf"):
         "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n"
         "HandleSuspendKey=ignore\nHandleHibernateKey=ignore\nIdleAction=ignore\n",
-    Path("/etc/systemd/sleep.conf.d/90-umami-no-sleep.conf"):
+    # Omarchy's own file: while it exists, the system menu leaves out Suspend
+    # and Hibernate (omarchy-sleep-disabled).
+    Path("/etc/systemd/sleep.conf.d/omarchy-sleep-disabled.conf"):
         "[Sleep]\nAllowSuspend=no\nAllowHibernation=no\nAllowSuspendThenHibernate=no\nAllowHybridSleep=no\n",
 }
 # sshd takes the first value it reads, so this sorts before the others.
@@ -276,6 +278,8 @@ def flavor(flavor: str, assume_yes: bool = False) -> int:
   enable(quiet=True)  # what happens next is said below
   for line in apply_system(recipe.system):
     print(line)
+  if channel_note(recipe.system):
+    print(channel_note(recipe.system))
   drop_stock(recipe.drops, recipe.name, assume_yes)
   if live and switch_live(*live):
     ui.say(f"{recipe.name} is running. Hyprland and the shell are reloading.")
@@ -416,9 +420,36 @@ def save_system(record: dict):
     SYSTEM.unlink(missing_ok=True)
 
 
+def channel_note(system: dict) -> str:
+  """A flavor's channel is checked, not switched: a switch updates the whole
+  system, which is the user's call. Asked as stock, where the answer is the
+  installed packages' channel rather than "dev"."""
+  want = system.get("channel")
+  if not want:
+    return ""
+  out = subprocess.run([str(STOCK / "bin/omarchy-channel-current")], capture_output=True, text=True,
+                       env={**os.environ, "OMARCHY_PATH": str(STOCK), "PATH": f"{STOCK}/bin:{SYSTEM_SECURE_PATH}"})
+  current = out.stdout.strip() or "unknown"
+  if current == want:
+    return ""
+  return f"  note      this machine is on {current}, and the flavor expects {want}: omarchy channel set {want} (it updates the whole system)"
+
+
+def regular_users() -> list:
+  """The people on this machine: accounts with a login shell, not services."""
+  return sorted(e.pw_name for e in pwd.getpwall()
+                if 1000 <= e.pw_uid < 60000 and not e.pw_shell.endswith(("nologin", "false")))
+
+
 def check_units(system: dict):
-  """Before anything changes: every service the flavor names is installed
-  (a [[package]] may have just installed it)."""
+  """Before anything changes: every service and group the flavor names
+  exists (a [[package]] may have just installed it), and so does its
+  timezone."""
+  for group in system.get("groups", []):
+    if subprocess.run(["getent", "group", group], capture_output=True).returncode != 0:
+      raise UmamiError(f"[system] names group {group}, which this machine doesn't have (add its [[package]]).")
+  if system.get("timezone") and not (Path("/usr/share/zoneinfo") / system["timezone"]).is_file():
+    raise UmamiError(f"[system] timezone {system['timezone']} isn't a zone this machine knows.")
   for units in (system.get("services") or {}).values():
     for unit in units:
       if systemctl("cat", "--", unit).returncode != 0:
@@ -488,10 +519,23 @@ def apply_system(system: dict) -> list:
     systemctl("set-default", record.pop("boot"))
     lines.append("  restored  booting to the desktop")
   if record.get("no_sleep") and system.get("sleep") is not False:
-    for path in NO_SLEEP:
+    created = record.pop("no_sleep")
+    for path in NO_SLEEP if created is True else map(Path, created):  # True: from before it was a list
       path.unlink(missing_ok=True)
-    record.pop("no_sleep")
     lines.append("  restored  sleep")
+  wanted_groups = set(system.get("groups", []))
+  kept = []
+  for user, group in record.get("groups", []):
+    if group in wanted_groups:
+      kept.append([user, group])
+    else:
+      subprocess.run(["gpasswd", "-d", user, group], capture_output=True)
+      lines.append(f"  removed   {user} from {group}")
+  record["groups"] = kept
+  if record.get("timezone") and not system.get("timezone"):
+    was = record.pop("timezone")
+    subprocess.run(["timedatectl", "set-timezone", was], capture_output=True)
+    lines.append(f"  restored  timezone {was}")
   save_system(record)
 
   for unit, action in wanted.items():
@@ -513,12 +557,35 @@ def apply_system(system: dict) -> list:
     save_system(record)
     lines.append("  boot      to a console from the next boot (sudo systemctl start sddm for the desktop)")
   if system.get("sleep") is False and not record.get("no_sleep"):
+    created = []
     for path, text in NO_SLEEP.items():
+      if path.exists():  # Omarchy's own, on hardware that can't sleep: never deleted
+        continue
       path.parent.mkdir(parents=True, exist_ok=True)
       path.write_text("# Written by umami: the flavor never sleeps. umami remove deletes it.\n" + text)
-    record["no_sleep"] = True
+      created.append(str(path))
+    record["no_sleep"] = created
     save_system(record)
-    lines.append("  sleep     off: no suspend on idle, lid or key (the lid from the next boot)")
+    lines.append("  sleep     off: no suspend on idle, lid or key, and none in the menu (the lid from the next boot)")
+  have = {tuple(pair) for pair in record["groups"]}
+  for group in system.get("groups", []):
+    members = subprocess.run(["getent", "group", group], capture_output=True, text=True).stdout.strip().split(":")[-1]
+    for user in regular_users():
+      if (user, group) in have or user in members.split(","):
+        continue
+      if subprocess.run(["gpasswd", "-a", user, group], capture_output=True).returncode == 0:
+        record["groups"].append([user, group])
+        save_system(record)
+        lines.append(f"  added     {user} to {group} (from their next login)")
+  if system.get("timezone") and not record.get("timezone"):
+    was = subprocess.run(["timedatectl", "show", "-p", "Timezone", "--value"], capture_output=True, text=True).stdout.strip()
+    if was != system["timezone"]:
+      record["timezone"] = was or "UTC"
+      subprocess.run(["timedatectl", "set-timezone", system["timezone"]], capture_output=True)
+      save_system(record)
+      lines.append(f"  timezone  {system['timezone']}")
+  if not record["groups"]:
+    record.pop("groups")
   if not services:
     record.pop("services", None)
   save_system(record)

@@ -10,9 +10,10 @@
 #   - boots to a text console, not the desktop: Hyprland, the shell and the
 #     login screen don't run until you start them with
 #       sudo systemctl start sddm
-#   - never sleeps: not on idle, not when the lid closes, not on a key
+#   - never sleeps: not on idle, not when the lid closes, not on a key, and
+#     the system menu offers no suspend
 #   - runs sshd (keys only, port 22 open in the firewall, rate limited),
-#     Tailscale and Docker
+#     Tailscale and Docker, with its users able to run docker without sudo
 #   - turns off Bluetooth and printing
 #
 # Authorize a key before you rely on SSH: password logins are off.
@@ -45,6 +46,8 @@ name = "server"
 [system]
 boot = "console"
 sleep = false
+groups = ["docker"]                    # docker and lazydocker without sudo
+channel = "stable"                     # checked, not switched
 
 [system.services]
 enable = ["sshd", "tailscaled", "docker"]

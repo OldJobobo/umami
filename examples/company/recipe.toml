@@ -24,6 +24,11 @@
 [flavor]
 name = "company"
 
+# Company machines stay on the stable channel. umami says so if one isn't;
+# switching updates the whole system, so it stays the user's call.
+[system]
+channel = "stable"
+
 # Put back at every login.
 [locked]
 theme = "Tokyo Night"

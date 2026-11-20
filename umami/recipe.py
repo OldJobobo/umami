@@ -227,7 +227,7 @@ def check_system(table) -> dict:
   `umami remove` puts it back."""
   if not isinstance(table, dict):
     raise RecipeError("[system] must be a table")
-  unknown = set(table) - {"boot", "sleep", "services"}
+  unknown = set(table) - {"boot", "sleep", "services", "groups", "timezone", "channel"}
   if unknown:
     raise RecipeError(f"[system]: unknown keys {', '.join(sorted(unknown))}")
   system = {}
@@ -241,6 +241,20 @@ def check_system(table) -> dict:
       raise RecipeError("[system] sleep is true or false")
     if not table["sleep"]:
       system["sleep"] = False
+  groups = table.get("groups", [])
+  if not (isinstance(groups, list) and all(isinstance(g, str) and re.fullmatch(r"[a-z_][a-z0-9_-]*", g) for g in groups)):
+    raise RecipeError("[system] groups is a list of group names, such as \"docker\"")
+  if groups:
+    system["groups"] = list(groups)
+  if "timezone" in table:
+    tz = table["timezone"]
+    if not (isinstance(tz, str) and re.fullmatch(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*", tz)):
+      raise RecipeError('[system] timezone is a zone such as "Europe/Amsterdam"')
+    system["timezone"] = tz
+  if "channel" in table:
+    if table["channel"] not in ("stable", "rc", "edge"):
+      raise RecipeError('[system] channel is "stable", "rc" or "edge"')
+    system["channel"] = table["channel"]
   services = table.get("services", {})
   if not isinstance(services, dict) or set(services) - {"enable", "disable"}:
     raise RecipeError("[system] services has enable and disable lists")

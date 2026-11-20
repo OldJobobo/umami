@@ -461,6 +461,10 @@ class SystemTest(unittest.TestCase):
     (bin_dir / "systemctl").chmod(0o755)
     (bin_dir / "sshd").write_text('#!/bin/bash\nprintf "passwordauthentication ${SSHD_PASSWORDS:-no}\\nkbdinteractiveauthentication no\\n"\n')
     (bin_dir / "sshd").chmod(0o755)
+    (bin_dir / "gpasswd").write_text('#!/bin/bash\necho "gpasswd $*" >> "$LOG"\n')
+    (bin_dir / "gpasswd").chmod(0o755)
+    (bin_dir / "getent").write_text('#!/bin/bash\nvar="MEMBERS_$2"; echo "$2:x:999:${!var}"\n')
+    (bin_dir / "getent").chmod(0o755)
     (bin_dir / "ssh-keygen").write_text("#!/bin/bash\n")
     (bin_dir / "ssh-keygen").chmod(0o755)
     self.saved = dict(os.environ)
@@ -512,6 +516,23 @@ class SystemTest(unittest.TestCase):
     self.assertEqual(sorted(self.calls()), sorted(["disable -- docker.service", "enable --now -- bluetooth.service",
                                                    "set-default graphical.target"]))
     self.assertTrue(self.keys_only.exists())
+
+  def test_omarchys_own_sleep_file_stays(self):
+    omarchys = next(path for path in self.no_sleep)
+    omarchys.write_text("[Sleep]\nAllowSuspend=no\n")  # hardware Omarchy knows can't sleep
+    self.system.apply_system({"sleep": False})
+    self.system.apply_system({})
+    self.assertTrue(omarchys.exists())
+    self.assertFalse(any(path.exists() for path in self.no_sleep if path != omarchys))
+
+  def test_users_added_to_a_group_are_taken_out_again(self):
+    os.environ["MEMBERS_docker"] = "bob"
+    with mock.patch.object(self.system, "regular_users", lambda: ["alice", "bob"]):
+      self.system.apply_system({"groups": ["docker"]})
+      self.system.apply_system({})
+    calls = [l for l in self.log.read_text().splitlines() if l.startswith("gpasswd")]
+    # bob was in docker already, so he stays.
+    self.assertEqual(calls, ["gpasswd -a alice docker", "gpasswd -d alice docker"])
 
   def test_sshd_stays_off_if_it_would_still_take_passwords(self):
     os.environ["SSHD_PASSWORDS"] = "yes"

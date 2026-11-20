@@ -202,7 +202,10 @@ def system_parts(system: dict) -> list:
   return [f for f in (system.get("boot") == "console" and "boots to a console (sudo systemctl start sddm for the desktop)",
                       system.get("sleep") is False and "never sleeps",
                       services.get("enable") and "on: " + short(services["enable"]),
-                      services.get("disable") and "off: " + short(services["disable"])) if f]
+                      services.get("disable") and "off: " + short(services["disable"]),
+                      system.get("groups") and "users in " + ", ".join(system["groups"]),
+                      system.get("timezone") and f"timezone {system['timezone']}",
+                      system.get("channel") and f"expects the {system['channel']} channel") if f]
 
 
 def builtin_lines(report: dict) -> list:

@@ -154,6 +154,27 @@ set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }] # omarchy bar 
 
 Defaults live in each user's own settings. umami applies them once, at the user's first login on the flavor, through Omarchy's own commands, and again only if a new version of the flavor changes a value. A theme or bar layout the user picks afterwards stays. Each bar entry is tracked on its own, so a changed entry is applied again without the others, and a widget this Omarchy doesn't have is skipped.
 
+The other settings Omarchy has a command for work the same way, in `[defaults]` or `[locked]`:
+
+```toml
+[defaults]
+font = "Iosevka Nerd Font"            # omarchy font set
+background = "wallpaper.jpg"          # omarchy theme bg set: a file beside the recipe
+terminal = "foot"                     # omarchy default terminal
+browser = "firefox"                   # omarchy default browser
+editor = "nvim"                       # omarchy default editor
+text_size = 14                        # omarchy display text size
+power_profile = "performance"         # omarchy powerprofiles set, on AC power
+idle = { screensaver = 0, lock = 300 } # seconds; 0 turns it off
+
+[defaults.apps]
+hide = ["YouTube", "WhatsApp"]        # out of the app launcher
+webapps = [{ name = "Wiki", url = "https://wiki.example.com", icon = "https://wiki.example.com/icon.png" }]
+tuis = [{ name = "Disk usage", command = "ncdu /", style = "float", icon = "disk" }]
+```
+
+A hidden launcher gets `NoDisplay=true` in the user's own copy, so it still opens the files it handles; web apps and TUIs are added with `omarchy-webapp-install` and `omarchy-tui-install`, and a launcher the user already has by that name is left alone. `umami remove` puts each setting back unless the user changed it since, shows the hidden launchers again, and removes what it added.
+
 ### Locks: what users can't change
 
 A flavor can also lock things, for a company that wants some features simply not there:
@@ -172,7 +193,7 @@ locked = true
 | | Default | Locked |
 | --- | --- | --- |
 | Widgets and panels | `[defaults.bar] remove`: switched off once, and can be turned back on | `shell.plugins.remove`: taken out of Omarchy, with nothing to turn back on |
-| Theme and bar | `[defaults]`: applied once | `[locked]`: put back at every login |
+| Theme, bar and settings | `[defaults]`: applied once | `[locked]`: put back at every login |
 | Settings and keys | loaded before `~/.config/hypr`, so the user wins | `locked = true` on `lua.set`, `lua`, `bind.*` or `plugin.hypr`: loaded after it, so the flavor wins |
 
 `umami plan` and `umami status` list what is locked, so a missing feature reads as a decision rather than a fault. A widget the flavor removed answers `omarchy plugin enable` with "this machine's flavor removes it". A lock holds against Omarchy's settings, bar, menus and commands. It is not a security boundary: anyone with sudo can switch the flavor off. For that, give people accounts without admin rights.
@@ -222,6 +243,16 @@ update = ["update", "--yes"]      # when the package version changes
 uninstall = ["uninstall", "--yes"] # offered when a flavor without it takes over
 ```
 
+A flavor can also leave out apps Omarchy installed:
+
+```toml
+[[package]]
+name = "libreoffice-fresh"
+remove = true
+```
+
+`sudo umami flavor` lists them, with any dependencies that go along, and asks before removing them (`--yes` skips the question). Only an app installed on its own goes, never one something else needs, and an app the machine doesn't have is skipped. Omarchy's updates don't put a removed app back. umami records each one: switching to a flavor that keeps it reinstalls it, and `umami remove` reinstalls them all.
+
 Some shells and plugin sets ship as a pacman package with their own installer. `sudo umami flavor` installs a recipe's packages before it changes anything else, and only from a repository in `pacman.conf`, whose signatures pacman checks. umami never installs from the AUR, a file or a URL. A package no repository has stops the switch and leaves the current flavor as it was. Packages stay when another flavor takes over, since other software may need them.
 
 A `[[suite]]` runs that package's installer as each user. It is asked about together with the flavor's plugins, under Omarchy's plugin warning, and nothing runs before a yes. The command must belong to the named package (`pacman -Qo`), so the code that runs is the package's, and the recipe only names its steps. When a package update changes the version, the next login runs `update`. Switching to a flavor without the suite offers its `uninstall` once.
@@ -233,12 +264,16 @@ A `[[suite]]` runs that package's installer as each user. It is asked about toge
 boot = "console"                  # a text login; sudo systemctl start sddm starts the desktop
 sleep = false                     # never suspend: not on idle, the lid or a key
 
+groups = ["docker"]               # the machine's users join these
+timezone = "Europe/Amsterdam"
+channel = "stable"                # checked, not switched
+
 [system.services]
 enable = ["sshd", "tailscaled", "docker"]   # enabled and started
 disable = ["bluetooth", "cups"]             # disabled and stopped
 ```
 
-`sudo umami flavor` applies these after the flavor composes, and records what each was before. A service must already be installed, by Omarchy or one of the recipe's `[[package]]`s, or the switch stops before anything changes. `sleep = false` writes drop-ins to `/etc/systemd/logind.conf.d` and `/etc/systemd/sleep.conf.d`; the lid setting takes effect from the next boot.
+`sudo umami flavor` applies these after the flavor composes, and records what each was before. A service must already be installed, by Omarchy or one of the recipe's `[[package]]`s, or the switch stops before anything changes. `sleep = false` writes a drop-in to `/etc/systemd/logind.conf.d` and Omarchy's own `/etc/systemd/sleep.conf.d/omarchy-sleep-disabled.conf`, so the system menu leaves out Suspend and Hibernate too; the lid setting takes effect from the next boot. If Omarchy already wrote that file, on hardware that can't sleep, umami never deletes it. `groups` adds every account with a login shell, from its next login. `channel` is only checked: a switch updates the whole system, so umami says which command to run.
 
 Enabling `sshd` turns password logins off first, the way `omarchy-setup-security-sshd` does, and checks with `sshd -T` that sshd really applies it; if another config overrides it, sshd stays off. Port 22 opens in the firewall, rate limited. Authorize a key with `omarchy-setup-security-sshd`.
 

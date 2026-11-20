@@ -28,8 +28,11 @@ import re
 from .lua import literal
 
 # Hyprland config sections a declarative lua.set may touch: how windows look
-# and are laid out. Not input, monitors, binds, rules, environment, or exec.
-LUA_SET_SECTIONS = {"general", "decoration", "animations", "dwindle", "master", "scrolling", "group", "misc"}
+# and are laid out, and how the keyboard, touchpad and cursor behave. Not
+# monitors, binds, rules, environment, or exec. A value here is a default:
+# the user's own ~/.config/hypr/input.lua loads after it and wins.
+LUA_SET_SECTIONS = {"general", "decoration", "animations", "dwindle", "master", "scrolling", "group", "misc",
+                    "input", "cursor"}
 LUA_SET_PATH = re.compile(r"^[a-z_]+(\.[a-z0-9_]+)+$")
 
 DIRECTIONS = {"l", "r", "u", "d"}

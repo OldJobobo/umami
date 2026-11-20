@@ -561,7 +561,7 @@ class TierTest(Fixture):
     for body in ('id = "x"\ntype = "lua"\ncode = "os.execute(1)"',
                  'id = "x"\ntype = "bind.add"\nkeys = "super+z"\ndescription = "x"\nrun = "curl x | sh"',
                  'id = "x"\ntype = "bind.add"\nkeys = "super+z"\ndescription = "x"\nlua = "os.exit()"',
-                 'id = "x"\ntype = "lua.set"\npath = "input.kb_layout"\nvalue = "us"',
+                 'id = "x"\ntype = "lua.set"\npath = "env.editor"\nvalue = "vim"',
                  'id = "x"\ntype = "file.remove"\npath = "bin/omarchy-git-url-check"'):
       with self.assertRaisesRegex(RecipeError, "run code"):
         self.recipe("[[transform]]\n" + body + "\n", code=False)
@@ -606,6 +606,13 @@ class TierTest(Fixture):
             action = { omarchy = "omarchy-not-a-command" }
         """, code=False)
     self.assertEqual(t["k"]["status"], "stale")
+
+  def test_touchpad_and_cursor_settings_are_declarative(self):
+    report, _ = self.compose('[[transform]]\nid = "natural"\ntype = "lua.set"\npath = "input.touchpad.natural_scroll"\nvalue = true\n'
+                             '[[transform]]\nid = "hide"\ntype = "lua.set"\npath = "cursor.inactive_timeout"\nvalue = 3\n', code=False)
+    self.assertEqual(report["status"], "ok")
+    with self.assertRaises(RecipeError):
+      self.recipe('[[transform]]\nid = "m"\ntype = "lua.set"\npath = "monitor.x"\nvalue = 1\n', code=False)
 
   def test_a_declarative_flavor_cannot_remove_a_service(self):
     write(self.source / "shell/plugins/lock/manifest.json", '{"id": "omarchy.lock", "kinds": ["service"]}')

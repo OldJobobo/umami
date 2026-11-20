@@ -2,7 +2,8 @@
 #
 # A dock along the bottom, Spotlight on Super+Space, Alt+Tab through your
 # windows, a menu bar with the clock on the right, rounded windows with a
-# soft shadow, and a light theme. The pieces come from the Omarchy plugin
+# soft shadow, a light theme, and natural scrolling with two-finger right
+# click on the touchpad. The pieces come from the Omarchy plugin
 # marketplace (plugins.omarchy.org).
 #
 #   Super + Space            Spotlight: apps, files, calculator, web
@@ -89,6 +90,22 @@ value = true
 id = "blur"
 type = "lua.set"
 path = "decoration.blur.enabled"
+value = true
+
+# --------------------------------------------------------------- touchpad
+# Scrolling moves the content, and a two-finger click is a right click, as
+# on a Mac. Your own ~/.config/hypr/input.lua still wins.
+
+[[transform]]
+id = "natural-scrolling"
+type = "lua.set"
+path = "input.touchpad.natural_scroll"
+value = true
+
+[[transform]]
+id = "two-finger-right-click"
+type = "lua.set"
+path = "input.touchpad.clickfinger_behavior"
 value = true
 
 # ------------------------------------------------------------------- keys

@@ -131,7 +131,7 @@ Save it as `~/.config/umami/flavors/mine/recipe.toml`, check it with `umami plan
 
 A flavor is declarative unless its `[flavor]` table says `code = true`. A declarative recipe is data: umami checks it and turns it into configuration itself, the way Omarchy treats a theme, and nothing in it runs as written. Declarative recipes can use:
 
-- `lua.set` on how windows look and are laid out (`general`, `decoration`, `animations`, `dwindle`, `master`, `scrolling`, `group`, `misc`), with plain values
+- `lua.set` on how windows look and are laid out (`general`, `decoration`, `animations`, `dwindle`, `master`, `scrolling`, `group`, `misc`) and how the keyboard, touchpad and cursor behave (`input`, `cursor`), with plain values. Your own `~/.config/hypr/input.lua` loads after the flavor and wins
 - `bind.remove`, and `bind.add` or `bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
 - `shell.plugins.remove` of bar widgets, panels, overlays and menus (not services such as the lock screen)
 - `plugin.hypr`, which loads a Hyprland Lua file that one of the recipe's own plugins ships (`plugin = "<id>"`, `file = "hypr/x.lua"`), from the user's install of it. It loads only if the user said yes to the plugin, and it runs as that user inside Hyprland, never as root. The code is the plugin's, not the flavor's.

@@ -669,4 +669,11 @@ class Composer:
     report_dir.mkdir(exist_ok=True)
     (report_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     shutil.copy2(self.recipe.path, report_dir / "recipe.toml")
+    # A background goes with the recipe copy, where each user's sync finds it.
+    for table in (self.recipe.defaults, self.recipe.locked):
+      if "background" in table:
+        target = report_dir / table["background"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.recipe.resolve_source(table["background"]), target)
+        target.chmod(0o644)
     return report

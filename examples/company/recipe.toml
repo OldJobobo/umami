@@ -6,6 +6,7 @@
 #
 # Locked here:
 #   - the company theme, put back at every login
+#   - the screen locking after 5 minutes idle, put back at every login
 #   - square window corners, whatever the user's looknfeel.lua says
 #   - the screen recording key, which a user can't bind again
 #   - the AI usage widget, which is not available at all
@@ -26,6 +27,7 @@ name = "company"
 # Put back at every login.
 [locked]
 theme = "Tokyo Night"
+idle = { lock = 300 }
 
 # Applied once; the user can change it.
 [defaults.bar]

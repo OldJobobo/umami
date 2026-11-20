@@ -28,6 +28,11 @@ FAKES = {
     "omarchy-plugin-disable": 'echo "disable $*" >> "$FAKE_LOG"; [[ $1 != *missing* ]] || { echo "plugin \'$1\' is not known" >&2; exit 1; }',
     "omarchy-git-url-check": 'echo "urlcheck $*" >> "$FAKE_LOG"; [[ $1 != *evil* ]]',
     "omarchy-launch-floating-terminal-with-presentation": 'echo "review $*" >> "$FAKE_LOG"',
+    "omarchy-font-set": 'echo "font $*" >> "$FAKE_LOG"; echo "$*" > "$FAKE_LOG.font"',
+    "omarchy-font-current": 'cat "$FAKE_LOG.font" 2>/dev/null || echo "JetBrainsMono Nerd Font"',
+    "omarchy-webapp-install": 'echo "webapp $*" >> "$FAKE_LOG"; mkdir -p "$HOME/.local/share/applications"; '
+                              'printf "[Desktop Entry]\\nName=%s\\n" "$1" > "$HOME/.local/share/applications/$1.desktop"',
+    "omarchy-webapp-remove": 'echo "webapp-remove $*" >> "$FAKE_LOG"; rm -f "$HOME/.local/share/applications/$1.desktop"',
 }
 
 
@@ -51,7 +56,9 @@ class UserLayerTest(unittest.TestCase):
     self.saved_env = dict(os.environ)
     os.environ.update({"HOME": str(self.home), "PATH": f"{fakes}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
                        "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"})
-    for key in ("XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    # Every XDG directory falls back under the fake home, so nothing reaches
+    # the real one's launchers, state or config.
+    for key in [k for k in os.environ if k.startswith("XDG_")]:
       os.environ.pop(key, None)
 
     # A plugin repository with two commits.
@@ -178,6 +185,72 @@ class UserLayerTest(unittest.TestCase):
     self.assertEqual(Path(str(self.log) + ".theme").read_text().strip(), "Vantablack")
     self.assertTrue(user.defaults_file().exists())
 
+  def settings_recipe(self, body):
+    self.recipe_dir.mkdir(exist_ok=True)
+    path = self.recipe_dir / "recipe.toml"
+    path.write_text('[flavor]\nname = "test"\n\n' + body)
+    return path
+
+  def font(self):
+    return Path(str(self.log) + ".font").read_text().strip()
+
+  def test_a_default_font_is_set_once_and_put_back_unless_you_changed_it(self):
+    recipe = self.settings_recipe('[defaults]\nfont = "Iosevka"\n')
+    user.sync(recipe, shell_timeout=1)
+    self.assertEqual(self.font(), "Iosevka")
+    Path(str(self.log) + ".font").write_text("Hack\n")  # the user picks another
+    user.sync(recipe, shell_timeout=1)
+    self.assertEqual(self.font(), "Hack")
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(self.font(), "Hack")
+
+    Path(str(self.log) + ".font").write_text("Hack\n")
+    user.sync(self.settings_recipe('[defaults]\nfont = "Iosevka"\n'), shell_timeout=1)
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(self.font(), "Hack")
+
+  def test_a_locked_font_comes_back_at_every_login(self):
+    recipe = self.settings_recipe('[locked]\nfont = "Iosevka"\n')
+    user.sync(recipe, shell_timeout=1)
+    Path(str(self.log) + ".font").write_text("Hack\n")
+    user.sync(recipe, shell_timeout=1)
+    self.assertEqual(self.font(), "Iosevka")
+
+  def test_hidden_launchers_come_back_on_removal(self):
+    share = Path(self.tmp.name) / "share"
+    (share / "applications").mkdir(parents=True)
+    (share / "applications/Office.desktop").write_text("[Desktop Entry]\nName=Office\nExec=office\n")
+    os.environ["XDG_DATA_DIRS"] = str(share)
+    apps = self.home / ".local/share/applications"
+    apps.mkdir(parents=True)
+    (apps / "YouTube.desktop").write_text("[Desktop Entry]\nName=YouTube\nNoDisplay=false\n[Desktop Action x]\nNoDisplay=x\n")
+    user.sync(self.settings_recipe('[defaults.apps]\nhide = ["YouTube", "Office", "NotHere"]\n'), shell_timeout=1)
+    self.assertIn("NoDisplay=true", (apps / "YouTube.desktop").read_text())
+    self.assertNotIn("NoDisplay=false", (apps / "YouTube.desktop").read_text())
+    self.assertIn("NoDisplay=x", (apps / "YouTube.desktop").read_text())  # another group's key stays
+    self.assertIn("NoDisplay=true", (apps / "Office.desktop").read_text())
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertIn("NoDisplay=false", (apps / "YouTube.desktop").read_text())
+    self.assertFalse((apps / "Office.desktop").exists())  # the system's own launcher shows again
+
+  def test_web_apps_are_added_and_removed_but_yours_are_left(self):
+    apps = self.home / ".local/share/applications"
+    apps.mkdir(parents=True)
+    (apps / "Wiki.desktop").write_text("[Desktop Entry]\nName=Mine\n")
+    user.sync(self.settings_recipe(
+        '[defaults.apps]\nwebapps = [\n'
+        '  { name = "Wiki", url = "https://wiki.example.com", icon = "wiki.png" },\n'
+        '  { name = "Chat", url = "https://chat.example.com", icon = "chat.png" },\n]\n'), shell_timeout=1)
+    self.assertTrue((apps / "Chat.desktop").exists())
+    self.assertNotIn("webapp Wiki", self.log.read_text())
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertFalse((apps / "Chat.desktop").exists())
+    self.assertEqual((apps / "Wiki.desktop").read_text(), "[Desktop Entry]\nName=Mine\n")
+
   def test_the_default_theme_is_set_once(self):
     self.assertEqual(user.sync(self.theme_recipe("Vantablack")), 0)
     self.assertEqual(self.log.read_text().count("theme Vantablack"), 1)
@@ -262,7 +335,7 @@ class UserLayerTest(unittest.TestCase):
   def test_defaults_take_only_known_keys(self):
     self.recipe_dir.mkdir(exist_ok=True)
     path = self.recipe_dir / "recipe.toml"
-    path.write_text('[flavor]\nname = "test"\n\n[defaults]\nfont = "x"\n')
+    path.write_text('[flavor]\nname = "test"\n\n[defaults]\nsparkles = "x"\n')
     with self.assertRaises(RecipeError):
       load(path)
 
@@ -461,7 +534,7 @@ class SuiteTest(unittest.TestCase):
     user.SUITE_PATH = str(self.pkgbin)
     os.environ.update({"HOME": str(self.home), "PATH": f"{fakes}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
                        "FAKE_VERSION": str(self.version), "FAKE_OWNER": str(self.owner)})
-    for key in ("XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    for key in [k for k in os.environ if k.startswith("XDG_")]:
       os.environ.pop(key, None)
 
   def tearDown(self):

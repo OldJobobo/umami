@@ -164,6 +164,192 @@ def defaults_file() -> Path:
   return state_file().with_name("defaults.json")
 
 
+# ---- settings Omarchy has a command for
+
+# key: (the command that prints the current value, the command that sets it)
+SETTINGS = {
+    "font": (["omarchy-font-current"], ["omarchy-font-set"]),
+    "background": (["omarchy-theme-bg-current"], ["omarchy-theme-bg-set"]),
+    "terminal": (["omarchy-default-terminal"], ["omarchy-default-terminal"]),
+    "browser": (["omarchy-default-browser"], ["omarchy-default-browser"]),
+    "editor": (["omarchy-default-editor"], ["omarchy-default-editor"]),
+    "text_size": (["omarchy-display-text-size"], ["omarchy-display-text-size"]),
+    "power_profile": (["omarchy-powerprofiles-list", "--active-state"], ["omarchy-powerprofiles-set", "ac"]),
+    "idle": (None, None),
+}
+# The theme sets a background, so a flavor's background comes after it.
+SETTING_ORDER = ["font", "background", "terminal", "browser", "editor", "text_size", "power_profile", "idle"]
+
+
+def setting_value(recipe, key: str):
+  """The recipe's value as Omarchy takes it: a background is a path."""
+  value = (recipe.defaults.get(key) if key in recipe.defaults else recipe.locked.get(key))
+  return str(recipe.root / value) if key == "background" else value
+
+
+def get_setting(key: str):
+  if key == "idle":
+    for path in (Path.home() / ".config/omarchy/shell.json",
+                 Path(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")) / "config/omarchy/shell.json"):
+      try:
+        idle = json.loads(path.read_text()).get("idle")
+      except (OSError, ValueError, AttributeError):
+        continue
+      if isinstance(idle, dict):
+        return idle
+    return {}
+  try:
+    out = run(SETTINGS[key][0]).stdout
+  except OSError:
+    return ""
+  if key == "text_size":  # "Text size: 12 (default) px"
+    first = out.splitlines()[0] if out else ""
+    return "reset" if "default" in first else "".join(c for c in first if c.isdigit())
+  if key == "power_profile":
+    return next((line.split()[0] for line in out.splitlines() if line.split()[1:] == ["1"]), "")
+  return out.strip()
+
+
+def same_setting(key: str, current, value) -> bool:
+  if key == "idle":
+    return isinstance(current, dict) and all(current.get(k) == v for k, v in value.items())
+  return str(current).strip().lower() == str(value).strip().lower()
+
+
+def set_setting(key: str, value):
+  if key == "idle":
+    program = ".idle = ((.idle // {}) + $v)"
+    result = run(["bash", "-c", 'source omarchy-shell-config && commit "$1" --argjson v "$2"', "umami",
+                  program, json.dumps(value)])
+  else:
+    result = run_shell_call([*SETTINGS[key][1], str(value)])
+  if result.returncode != 0:
+    raise PluginError(f"{key} {value}: " + (result.stderr or result.stdout).strip()[:300])
+
+
+def describe(key: str, value) -> str:
+  if key == "idle":
+    return "idle " + ", ".join(f"{k} {'off' if v == 0 else f'{v}s'}" for k, v in sorted(value.items()))
+  if key == "background":
+    return f"background {Path(str(value)).name}"
+  return f"{key.replace('_', ' ')} {value}"
+
+
+# ---- launchers: [defaults.apps]
+
+def applications_dir() -> Path:
+  base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+  return Path(base) / "applications"
+
+
+def system_launcher(name: str):
+  dirs = (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+  return next((Path(d) / "applications" / f"{name}.desktop" for d in dirs
+               if (Path(d) / "applications" / f"{name}.desktop").is_file()), None)
+
+
+def hidden(text: str) -> str:
+  """The same desktop entry with NoDisplay=true: launchers leave it out,
+  and it still opens the files it handles."""
+  out, main = [], False
+  for line in text.splitlines():
+    if line.strip().startswith("["):
+      main = line.strip() == "[Desktop Entry]"
+      out.append(line)
+      if main:
+        out.append("NoDisplay=true")
+      continue
+    if not (main and line.split("=", 1)[0].strip() == "NoDisplay"):
+      out.append(line)
+  return "\n".join(out) + "\n"
+
+
+def hide_launcher(name: str):
+  """Returns the record for a hidden launcher, or None when there is none."""
+  mine = applications_dir() / f"{name}.desktop"
+  if mine.is_file():
+    before = mine.read_text()
+  else:
+    source = system_launcher(name)
+    if not source:
+      return None
+    before = None
+    mine.parent.mkdir(parents=True, exist_ok=True)
+  wrote = hidden(before if before is not None else source.read_text())
+  mine.write_text(wrote)
+  return {"before": before, "wrote": wrote}
+
+
+def unhide_launcher(name: str, record: dict) -> bool:
+  """Put a launcher back, unless it changed since (the user's own edit)."""
+  mine = applications_dir() / f"{name}.desktop"
+  if not mine.is_file() or mine.read_text() != record["wrote"]:
+    return False
+  if record.get("before") is None:
+    mine.unlink()
+  else:
+    mine.write_text(record["before"])
+  return True
+
+
+def apply_apps(apps: dict, mine: dict, applied: dict, dry_run: bool) -> list:
+  lines = []
+  done = mine.setdefault("apps", {"hidden": {}, "added": {}})
+  for name in apps.get("hide", []):
+    if name in done["hidden"]:
+      continue
+    if dry_run:
+      lines.append(f"  would hide {name}")
+      continue
+    record = hide_launcher(name)
+    if record:
+      done["hidden"][name] = record
+      lines.append(f"  hid       {name}")
+  for kind, installer in (("webapps", "omarchy-webapp-install"), ("tuis", "omarchy-tui-install")):
+    for entry in apps.get(kind, []):
+      name = entry["name"]
+      if name in done["added"]:
+        continue
+      if (applications_dir() / f"{name}.desktop").exists():
+        lines.append(f"  skipped   {name}: you already have a launcher by that name")
+        done["added"][name] = None  # yours: never removed
+        continue
+      if dry_run:
+        lines.append(f"  would add {name}")
+        continue
+      args = [entry["url"], entry["icon"]] if kind == "webapps" else [entry["command"], entry["style"], entry["icon"]]
+      result = run([installer, name, *args])
+      if result.returncode != 0:
+        lines.append(f"  FAILED    adding {name}: " + (result.stderr or result.stdout).strip()[:200])
+        continue
+      done["added"][name] = kind
+      lines.append(f"  added     {name}")
+  if not dry_run:
+    save_defaults(applied)
+  return lines
+
+
+def restore_apps(done: dict) -> tuple:
+  """(lines, what failed or is left to do)."""
+  lines, left = [], {"hidden": {}, "added": {}}
+  for name, record in done.get("hidden", {}).items():
+    if unhide_launcher(name, record):
+      lines.append(f"  restored  {name} in the launcher")
+    else:
+      lines.append(f"  kept      {name}: you changed its launcher since")
+  for name, kind in done.get("added", {}).items():
+    if not kind or not (applications_dir() / f"{name}.desktop").exists():
+      continue
+    remover = "omarchy-webapp-remove" if kind == "webapps" else "omarchy-tui-remove"
+    result = run([remover, name])
+    if result.returncode == 0:
+      lines.append(f"  removed   {name}")
+    else:
+      left["added"][name] = kind
+      lines.append(f"  FAILED    removing {name}: " + (result.stderr or result.stdout).strip()[:200])
+  return lines, (left if left["added"] else None)
+
+
 def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
   """Apply the recipe's [defaults] once per user, then its [locked] table.
 
@@ -183,6 +369,10 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
   if isinstance(mine.get("bar"), dict):
     mine["bar_done"] = sorted({command_key(c) for c in bar_commands(mine.pop("bar"))})
   lines = []
+  # The theme brings its own background: what umami remove puts back is the
+  # one from before either changed.
+  if not dry_run and "background" in recipe.defaults and "background" not in mine.get("settings", {}):
+    mine.setdefault("before", {}).setdefault("background", get_setting("background"))
   theme = recipe.defaults.get("theme")
   if theme and mine.get("theme") != theme:
     if dry_run:
@@ -218,6 +408,29 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
         save_defaults(applied)
         lines.append("  set       bar layout" + ("" if len(todo) == len(commands) else f" ({len(todo)} changed)"))
         lines += skipped
+
+  settings = mine.setdefault("settings", {})
+  for key in SETTING_ORDER:
+    if key not in recipe.defaults:
+      continue
+    value = setting_value(recipe, key)
+    if settings.get(key) == value:
+      continue
+    if dry_run:
+      lines.append(f"  would set {describe(key, value)}")
+      continue
+    mine.setdefault("before", {}).setdefault(key, get_setting(key))
+    mine["applied_at"] = time.time()
+    try:
+      set_setting(key, value)
+    except PluginError as error:
+      lines.append(f"  FAILED    {error}")
+      continue
+    settings[key] = value
+    save_defaults(applied)
+    lines.append(f"  set       {describe(key, value)}")
+  if recipe.defaults.get("apps"):
+    lines += apply_apps(recipe.defaults["apps"], mine, applied, dry_run)
   return lines + apply_locked(recipe, dry_run, shell_timeout, waiting)
 
 
@@ -237,6 +450,20 @@ def apply_locked(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> li
       else:
         set_theme(theme)
         lines.append(f"  locked    theme {theme}")
+  for key in SETTING_ORDER:
+    if key not in recipe.locked:
+      continue
+    value = setting_value(recipe, key)
+    if same_setting(key, get_setting(key), value):
+      continue
+    if dry_run:
+      lines.append(f"  would set {describe(key, value)} (locked)")
+      continue
+    try:
+      set_setting(key, value)
+      lines.append(f"  locked    {describe(key, value)}")
+    except PluginError as error:
+      lines.append(f"  FAILED    {error}")
   bar = recipe.locked.get("bar")
   if bar and waiting:
     lines.append("  waiting   locked bar layout, until the plugins are decided")
@@ -339,8 +566,9 @@ def restore_defaults(shell_timeout: float = 60.0, dry_run: bool = False) -> list
   norm = lambda name: name.strip().lower().replace("-", " ")
   lines, remaining = [], {}
   for name, mine in sorted(applied.items(), key=lambda item: -(item[1].get("applied_at") or 0)):
-    left = {**mine, "bar_done": []}
+    left = {**mine, "bar_done": [], "settings": {}}
     left.pop("theme", None)
+    left.pop("apps", None)
     if mine.get("theme") and mine.get("before_theme"):
       if norm(current_theme()) == norm(mine["theme"]):
         if dry_run:
@@ -372,7 +600,30 @@ def restore_defaults(shell_timeout: float = 60.0, dry_run: bool = False) -> list
         if len(left["bar_done"]) < len(pairs):
           lines.append("  restored  bar layout")
       lines += [f"  kept      {wid}: you changed it after {name} did" for wid in sorted(set(changed))]
-    if left.get("theme") or left["bar_done"]:
+    for key, value in (mine.get("settings") or {}).items():
+      before = (mine.get("before") or {}).get(key)
+      if before in (None, "", {}):
+        continue
+      if not same_setting(key, get_setting(key), value):
+        lines.append(f"  kept      {key.replace('_', ' ')}: you changed it after {name} set it")
+      elif dry_run:
+        lines.append(f"  would restore {describe(key, before)}")
+      else:
+        try:
+          set_setting(key, before)
+          lines.append(f"  restored  {describe(key, before)}")
+        except PluginError as error:
+          left["settings"][key] = value
+          lines.append(f"  FAILED    {error}")
+    if mine.get("apps") and dry_run:
+      lines += [f"  would restore {n} in the launcher" for n in mine["apps"].get("hidden", {})]
+      lines += [f"  would remove {n}" for n, kind in mine["apps"].get("added", {}).items() if kind]
+    elif mine.get("apps"):
+      app_lines, apps_left = restore_apps(mine["apps"])
+      lines += app_lines
+      if apps_left:
+        left["apps"] = apps_left
+    if left.get("theme") or left["bar_done"] or left["settings"] or left.get("apps"):
       remaining[name] = left
   if dry_run:
     return lines

@@ -152,7 +152,7 @@ def extras(report: dict, locked: list) -> list:
   defaults = report.get("defaults") or {}
   bar = bar_summary(defaults.get("bar") or {})
   first_login = [f for f in (defaults.get("theme") and f"theme {defaults['theme']}",
-                             bar and f"bar: {bar}",
+                             bar and f"bar: {bar}", *setting_parts(defaults), apps_summary(defaults.get("apps") or {}),
                              report.get("plugins") and "plugins " + ", ".join(report["plugins"])) if f]
   installs = [f for f in (report.get("packages") and "packages " + ", ".join(report["packages"]),
                           report.get("suites") and "plugin suites " + ", ".join(suite_text(x) for x in report["suites"])) if f]
@@ -172,6 +172,28 @@ def extras(report: dict, locked: list) -> list:
   if locked:
     lines.append(f"Locked, users can't change: {', '.join(locked)}")
   return lines
+
+
+SETTING_KEYS = ("font", "background", "terminal", "browser", "editor", "text_size", "power_profile", "idle")
+
+
+def setting_parts(table: dict) -> list:
+  parts = []
+  for key in SETTING_KEYS:
+    if key not in table:
+      continue
+    value = table[key]
+    if key == "idle":
+      parts.append("idle " + ", ".join(f"{k} {'off' if v == 0 else f'{v}s'}" for k, v in sorted(value.items())))
+    else:
+      parts.append(f"{key.replace('_', ' ')} {value}")
+  return parts
+
+
+def apps_summary(apps: dict) -> str:
+  parts = [f"{len(apps[k])} {label}" for k, label in (("hide", "hidden"), ("webapps", "web apps added"),
+                                                       ("tuis", "TUIs added")) if apps.get(k)]
+  return "launchers: " + ", ".join(parts) if parts else ""
 
 
 def system_parts(system: dict) -> list:

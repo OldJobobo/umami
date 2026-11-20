@@ -109,6 +109,7 @@ def locked_items(report: dict) -> list:
     items.append(f"theme {table['theme']}")
   if table.get("bar"):
     items.append("bar layout")
+  items += ui.setting_parts(table)
   return items
 
 

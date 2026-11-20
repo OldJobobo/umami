@@ -683,7 +683,7 @@ class LockedTest(Fixture):
 
   def test_the_locked_table_is_checked_like_defaults(self):
     self.assertEqual(self.recipe('[locked]\ntheme = "Nord"\n', code=False).locked, {"theme": "Nord"})
-    for body in ('[locked]\nfont = "x"\n', '[locked.bar]\nmove = [{ id = "x", section = "middle" }]\n'):
+    for body in ('[locked]\nsparkles = "x"\n', '[locked.bar]\nmove = [{ id = "x", section = "middle" }]\n'):
       with self.assertRaises(RecipeError):
         self.recipe(body, code=False)
 

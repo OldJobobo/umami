@@ -210,6 +210,9 @@ def load(path) -> Recipe:
   # flavor (the user's later choice stays); [locked] at every login.
   recipe.defaults = check_user_table("defaults", data.get("defaults", {}))
   recipe.locked = check_user_table("locked", data.get("locked", {}))
+  for table in (recipe.defaults, recipe.locked):
+    if "background" in table and not recipe.resolve_source(table["background"]).is_file():
+      raise RecipeError(f"background {table['background']} is not a file in the recipe's directory")
   recipe.system = check_system(data.get("system", {}))
   return recipe
 
@@ -255,18 +258,61 @@ def check_system(table) -> dict:
   return system
 
 
+SETTING_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
+POWER_PROFILES = ("power-saver", "balanced", "performance")
+
+
 def check_user_table(name: str, table) -> dict:
-  """[defaults] or [locked]: a theme and a bar layout."""
+  """[defaults] or [locked]: a user's theme, bar, and the settings Omarchy
+  has a command for. [defaults] also takes [defaults.apps]."""
   if not isinstance(table, dict):
     raise RecipeError(f"[{name}] must be a table")
-  unknown = set(table) - {"theme", "bar"}
+  keys = {"theme", "bar", "font", "background", "terminal", "browser", "editor", "text_size", "idle", "power_profile"}
+  unknown = set(table) - keys - ({"apps"} if name == "defaults" else set())
   if unknown:
     raise RecipeError(f"[{name}]: unknown keys {', '.join(sorted(unknown))}")
   if "theme" in table and not (isinstance(table["theme"], str) and table["theme"].strip()):
     raise RecipeError(f"[{name}] theme must be a theme name")
   if "bar" in table:
     check_bar_defaults(table["bar"], name)
+  if "font" in table and not plain_text(table["font"]):
+    raise RecipeError(f"[{name}] font must be a font name, as omarchy font list shows it")
+  if "background" in table and not (plain_text(table["background"]) and not table["background"].startswith("/")):
+    raise RecipeError(f"[{name}] background must be an image or video in the recipe's directory")
+  for key in ("terminal", "browser", "editor"):
+    if key in table and not (isinstance(table[key], str) and SETTING_NAME.fullmatch(table[key])):
+      raise RecipeError(f"[{name}] {key} must be a name, as omarchy default {key} takes it")
+  if "text_size" in table and not (type(table["text_size"]) is int and 8 <= table["text_size"] <= 40):
+    raise RecipeError(f"[{name}] text_size must be a size in pixels, 8 to 40")
+  if "power_profile" in table and table["power_profile"] not in POWER_PROFILES:
+    raise RecipeError(f"[{name}] power_profile is one of {', '.join(POWER_PROFILES)}")
+  if "idle" in table:
+    idle = table["idle"]
+    if not (isinstance(idle, dict) and idle and not set(idle) - {"screensaver", "lock"}
+            and all(type(v) is int and v >= 0 for v in idle.values())):
+      raise RecipeError(f"[{name}.idle] has screensaver and lock, in seconds (0 turns it off)")
+  if "apps" in table:
+    check_apps(table["apps"])
   return dict(table)
+
+
+def check_apps(apps):
+  """[defaults.apps]: launchers. hide takes entries out of the app launcher;
+  webapps and tuis add them, with Omarchy's own installers."""
+  if not isinstance(apps, dict) or set(apps) - {"hide", "webapps", "tuis"}:
+    raise RecipeError("[defaults.apps] has hide, webapps and tuis")
+  launcher = lambda v: plain_text(v) and "/" not in v
+  hide = apps.get("hide", [])
+  if not (isinstance(hide, list) and all(launcher(n) for n in hide)):
+    raise RecipeError("[defaults.apps] hide is a list of launcher names, such as \"YouTube\"")
+  for entry in apps.get("webapps", []):
+    if not (isinstance(entry, dict) and set(entry) == {"name", "url", "icon"} and launcher(entry["name"])
+            and plain_text(entry["url"]) and entry["url"].startswith("https://") and plain_text(entry["icon"])):
+      raise RecipeError("[defaults.apps] webapps entries need name, an https url and icon")
+  for entry in apps.get("tuis", []):
+    if not (isinstance(entry, dict) and set(entry) == {"name", "command", "style", "icon"} and launcher(entry["name"])
+            and plain_text(entry["command"]) and entry["style"] in ("float", "tile") and plain_text(entry["icon"])):
+      raise RecipeError("[defaults.apps] tuis entries need name, command, style (float or tile) and icon")
 
 
 BAR_SECTIONS = {"left", "centerBegin", "center", "centerEnd", "tray", "right"}

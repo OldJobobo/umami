@@ -25,8 +25,9 @@
 # packages the flavor installed.
 #
 # When you do start the desktop, it is a quiet one: no animations, blur or
-# shadows, no music, chat, notes or web-app keys, Tailscale on the bar, and
-# keys for the tools:
+# shadows, no screensaver, the performance power profile, no web apps or
+# their keys, no music, chat or notes keys, Tailscale on the bar, and keys
+# for the tools:
 #
 #   Super + Shift + D          Docker (lazydocker)            (stock)
 #   Super + Shift + T          Activity (btop)                (stock)
@@ -52,6 +53,13 @@ disable = ["bluetooth", "cups"]
 # Applied once, at each user's first login on the flavor.
 [defaults]
 theme = "Matte Black"
+power_profile = "performance"          # on AC power
+idle = { screensaver = 0 }             # no screensaver; the screen still locks
+
+# The web apps, out of the app launcher: their keys are gone below too.
+[defaults.apps]
+hide = ["Basecamp", "Discord", "Google Contacts", "Google Maps", "Google Messages", "Google Photos",
+        "HEY", "WhatsApp", "X", "YouTube", "Zoom"]
 
 # Switched off once, so a user can turn any of them back on. Tailscale goes
 # first on the right, where its status and machines are a click away.

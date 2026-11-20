@@ -198,6 +198,7 @@ Locked is not a security boundary. It makes things unavailable through Omarchy's
 | mac-switcher | Declarative | A dock, Spotlight on Super+Space (the Omarchy menu moves to Super+Alt+Space), Fathom's Alt+Tab loaded through plugin.hypr, Lock Explorer, the clock on the right of the bar, rounded windows with shadow and blur, and the White theme |
 | shibumi | Declarative | HANCORE's Shibumi Shell through `[[package]]` and `[[suite]]`, with the Solitude theme and a matching window look |
 | company | Declarative | Locks: a theme put back at every login, keys and a setting users can't override, a widget that isn't there |
+| server | Declarative | A machine that runs services: a stripped desktop, Tailscale added to the bar with `[defaults.bar] add`, keys for the speed tests, and server tools as packages. Turning services on (sshd, tailscaled, docker without sudo) is left to Omarchy's own commands until umami has a way to run them once, with consent |
 
 ## Update flow and failure handling
 

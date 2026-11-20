@@ -36,6 +36,7 @@ umami won't switch while Omarchy is dev-linked to a checkout. Run `omarchy dev u
 | [`mac-switcher`](examples/mac-switcher/recipe.toml) | For people coming from macOS: a dock, Spotlight on Super+Space, Alt+Tab, a menu bar with the clock on the right, and a light theme |
 | [`command-palette`](examples/command-palette/recipe.toml) | The Omarchy menu replaced by Keystroke, a Raycast-style palette, without changing any Omarchy file |
 | [`company`](examples/company/recipe.toml) | Omarchy as an employer might hand it out: a theme put back at every login, keys and a setting users can't override, a widget that isn't there |
+| [`server`](examples/server/recipe.toml) | For a machine that runs services: no animations, blur or shadows, no music, chat or web-app keys, a quieter bar with Tailscale on it, keys for the speed tests, and tools for containers, disks, temperatures, backups and the network |
 
 Each recipe's comments say what it changes and which keys move.
 

@@ -372,10 +372,11 @@ def clean_removed_tree():
   """Delete the tree of a removed flavor once nothing can run from it: after
   the reboot that follows `umami remove`."""
   if not (REMOVED.is_file() and TREE.exists()) or REMOVED.read_text().strip() == boot_id():
-    return
+    return False
   shutil.rmtree(TREE)
   REMOVED.unlink()
   subprocess.run(["git", "config", "--system", "--unset-all", "safe.directory", str(TREE)], capture_output=True)
+  return True
 
 
 def required_by(name: str) -> set:
@@ -428,9 +429,12 @@ def remove(assume_yes: bool = False) -> int:
   theme and bar it set (put back). The flavor stays available to install
   again."""
   require_root()
-  clean_removed_tree()
+  cleaned = clean_removed_tree()
   name = load(RECIPE).name if RECIPE.is_file() else ""
   if not (name or installed_packages() or (TREE.exists() and not REMOVED.is_file())):
+    if cleaned:
+      ui.say("Deleted the removed flavor's files.")
+      return 0
     raise UmamiError("no flavor is installed.")
   if name:
     ui.say(f"Removing flavor {name}.")
@@ -449,7 +453,8 @@ def remove(assume_yes: bool = False) -> int:
   REPORT.unlink(missing_ok=True)
   if TREE.exists() and running:
     REMOVED.write_text(boot_id() + "\n")
-    ui.say("This session still runs the flavor. Reboot to return to stock Omarchy; the flavor's files go after that.")
+    ui.say("This session still runs the flavor. Reboot to return to stock Omarchy.")
+    ui.say("After the reboot, its files go at the next Omarchy update, or now with: sudo umami remove")
   else:
     if TREE.exists():
       shutil.rmtree(TREE)

@@ -117,6 +117,25 @@ class UserLayerTest(unittest.TestCase):
     self.assertEqual(self.sync(self.first), 0)
     self.assertNotIn("enable", self.log.read_text())
 
+  def test_a_plugins_setup_runs_once_and_its_teardown_before_removal(self):
+    scripts = self.repo / "scripts"
+    scripts.mkdir()
+    for name in ("enable", "disable"):
+      (scripts / name).write_text(f'#!/bin/bash\necho "{name} ran" >> "$FAKE_LOG"\n')
+      (scripts / name).chmod(0o755)
+    git(self.repo, "add", "-A")
+    git(self.repo, "commit", "-q", "-m", "scripts")
+    commit = git(self.repo, "rev-parse", "HEAD")
+    recipe = self.recipe(commit, 'section = "right"\nsetup = "scripts/enable"\nteardown = "scripts/disable"')
+    self.assertEqual(user.sync(recipe, shell_timeout=1, assume_yes=True), 0)
+    self.assertEqual(self.log.read_text().count("enable ran"), 1)
+    user.sync(recipe, shell_timeout=1, assume_yes=True)
+    self.assertEqual(self.log.read_text().count("enable ran"), 1)
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove(assume_yes=True)
+    calls = self.log.read_text()
+    self.assertLess(calls.index("disable ran"), calls.index("remove acme.dock"))
+
   def test_a_new_pin_updates_without_re_enabling(self):
     self.sync(self.first)
     self.log.write_text("")

@@ -228,6 +228,19 @@ Marketplace plugins are installed for each user, the way `omarchy plugin add` wo
 
 Nothing is installed without the user's yes. At login, plugins the user hasn't decided on open a terminal with Omarchy's own plugin warning and a Yes/No question, and a no is remembered. After a yes, umami checks the URL with `omarchy-git-url-check`, clones the repository at exactly the pinned commit, checks the manifest's id, runs `omarchy-plugin-validate`, moves the plugin into `~/.config/omarchy/plugins`, and enables it with its placement. A plugin you remove stays removed, one you installed yourself is left alone, and a new pin updates only what umami installed.
 
+A plugin that needs a step of its own after install, such as which-key adding its block to `~/.config/hypr/bindings.lua`, can name the script it ships for that:
+
+```toml
+[[plugin]]
+id = "huacnlee.which-key"
+repo = "https://github.com/huacnlee/omarchy-which-key"
+commit = "a80451064fb1f354cb86ecad0a3d610218e75bd5"
+setup = "scripts/enable-integration"      # run once, as the user, after their yes
+teardown = "scripts/disable-integration"  # run before umami removes the plugin
+```
+
+The script must be inside the plugin, from the user's install of it, so the code that runs is the plugin's, as with `plugin.hypr`. If the teardown fails, the plugin stays rather than leave its setup pointing at files that are gone. Plugins keep their own settings in different places (a bar entry, their own file), so umami sets only what goes through the bar, with `[defaults.bar] set`.
+
 ### Packages and plugin suites
 
 ```toml

@@ -758,6 +758,42 @@ def ask_leftovers(recipe, state: dict, ids: list) -> bool:
     return False
 
 
+def plugin_script(pid: str, rel: str):
+  """A script the plugin ships, from this user's install of it; None if it
+  isn't there or leads outside the plugin."""
+  root = (plugins_dir() / pid).resolve()
+  path = (root / rel).resolve()
+  return path if path.is_relative_to(root) and path.is_file() and os.access(path, os.X_OK) else None
+
+
+def setup_plugins(recipe, state: dict, dry_run: bool) -> list:
+  """A plugin's own setup step, such as which-key's enable-integration:
+  run once, as the user, after they said yes to the plugin. The code is
+  the plugin's, as with plugin.hypr; the recipe only names the script."""
+  lines = []
+  for plugin in recipe.plugins:
+    pid, known = plugin["id"], state.get(plugin["id"])
+    if not plugin.get("setup") or not known or known.get("declined") or known.get("setup_done"):
+      continue
+    if not (plugins_dir() / pid).exists():
+      continue
+    if dry_run:
+      lines.append(f"  would set up {pid} ({plugin['setup']})")
+      continue
+    script = plugin_script(pid, plugin["setup"])
+    result = run_shell_call([str(script)]) if script else None
+    if not result or result.returncode != 0:
+      why = (result.stderr or result.stdout).strip()[:200] if result else f"{plugin['setup']} isn't in the plugin"
+      lines.append(f"  FAILED    setting up {pid}: {why}")
+      continue
+    known["setup_done"] = True
+    if plugin.get("teardown"):
+      known["teardown"] = plugin["teardown"]
+    save_state(state)
+    lines.append(f"  set up    {pid}")
+  return lines
+
+
 def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assume_yes: bool, ask=None) -> list:
   """Offer to remove the leftover plugins, once; the answer is remembered."""
   if not ids:
@@ -775,6 +811,13 @@ def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assum
           continue
         result = run_shell_call([known["command"], *known["uninstall"]])
       else:
+        # Its own teardown first: what its setup did refers to its files.
+        script = plugin_script(pid, state[pid]["teardown"]) if state[pid].get("teardown") else None
+        undone = run_shell_call([str(script)]) if script else None
+        if undone is not None and undone.returncode != 0:
+          lines.append(f"  FAILED    removing {pid}: its teardown failed, so it stays: "
+                       + (undone.stderr or undone.stdout).strip()[:200])
+          continue
         result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
       if result.returncode == 0:
         name = label(pid, state)
@@ -1028,6 +1071,7 @@ def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive
       failed += 1
       lines.append(f"  FAILED    {pid}: {error}")
 
+  lines += setup_plugins(recipe, state, dry_run)
   lines += tidy(recipe, state, left, dry_run, interactive, assume_yes)
 
   try:

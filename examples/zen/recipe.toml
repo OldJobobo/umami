@@ -23,9 +23,11 @@
 # turns into configuration, and nothing in it runs as written. The plugins
 # are installed only after you say yes, with Omarchy's own warning.
 #
-# One step is yours: which-key hooks into Hyprland by adding a marked block to
-# your own ~/.config/hypr/bindings.lua, so the flavor leaves that to you. Open
-# the Which Key widget's settings in the bar and turn on Enabled.
+# which-key hooks into Hyprland by adding a marked block to your own
+# ~/.config/hypr/bindings.lua. After you say yes to it, umami runs its own
+# Enable step once, the same one as the Enabled switch in its settings.
+# Turn that switch off and the block goes; removing the plugin takes it out
+# first.
 
 [flavor]
 name = "zen"
@@ -80,6 +82,8 @@ id = "huacnlee.which-key"
 repo = "https://github.com/huacnlee/omarchy-which-key"
 commit = "a80451064fb1f354cb86ecad0a3d610218e75bd5"
 note = "Hold Super for a guide to the bindings you can press next."
+setup = "scripts/enable-integration"       # its Enabled switch, run once
+teardown = "scripts/disable-integration"   # before umami removes it
 
 [[plugin]]
 id = "jrmmhm.pocket"

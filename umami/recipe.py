@@ -190,9 +190,15 @@ def load(path) -> Recipe:
     if raw["id"] in seen_plugins:
       raise RecipeError(f"{where}: duplicate plugin {raw['id']!r}")
     seen_plugins.add(raw["id"])
-    unknown = set(raw) - {"id", "repo", "commit", "section", "index", "note"}
+    unknown = set(raw) - {"id", "repo", "commit", "section", "index", "note", "setup", "teardown"}
     if unknown:
       raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
+    for step in ("setup", "teardown"):
+      if step in raw and not (plain_text(raw[step]) and not raw[step].startswith("/")
+                              and ".." not in Path(raw[step]).parts):
+        raise RecipeError(f"{where} ({raw['id']}): {step} is a script inside the plugin, such as \"scripts/enable\"")
+    if "teardown" in raw and "setup" not in raw:
+      raise RecipeError(f"{where} ({raw['id']}): teardown undoes a setup, so it needs one")
     recipe.plugins.append(dict(raw))
 
   checked = check_packages(data.get("package", []))

@@ -457,8 +457,9 @@ def suite_users() -> dict:
 
 def removal_set(names: list) -> list:
   """Everything pacman removes with these: -Rns also takes dependencies
-  nothing else needs, which the question has to show."""
-  out = subprocess.run(["pacman", "-Rnsp", "--print-format", "%n", "--", *names], capture_output=True, text=True)
+  nothing else needs, which the question has to show. (--nosave and
+  --print can't go together; it lists the same packages.)"""
+  out = subprocess.run(["pacman", "-Rsp", "--print-format", "%n", "--", *names], capture_output=True, text=True)
   if out.returncode != 0:
     raise UmamiError(f"pacman can't remove {', '.join(names)}: " + (out.stderr or out.stdout).strip()[:300])
   return out.stdout.split()

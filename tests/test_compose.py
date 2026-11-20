@@ -825,7 +825,7 @@ class InstallPackagesTest(unittest.TestCase):
         '  -Q) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
         '  -Qi) var="NEEDS_${3//-/_}"; printf "Name            : %s\\nRequired By     : %s\\n" "$3" "${!var:-None}" ;;\n'
         '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
-        '  -Rnsp) shift 4; printf "%s\\n" "$@" $ORPHANS ;;\n'
+        '  -Rsp) shift 4; printf "%s\\n" "$@" $ORPHANS ;;\n'
         'esac\n')
     (bin_dir / "pacman").chmod(0o755)
     (bin_dir / "omarchy-pkg-add").write_text('#!/bin/bash\necho "add $*" >> "$PACMAN_LOG"\n')

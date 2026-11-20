@@ -528,7 +528,8 @@ def remove(assume_yes: bool = False) -> int:
   drop_packages(assume_yes)
 
   current = configured_path()
-  if current in (str(STOCK), str(TREE)):
+  linked = current not in (str(STOCK), str(TREE))
+  if not linked:
     point_at(STOCK)
   else:
     ui.say(f"Omarchy is dev-linked to {current}; that stays as it is.")
@@ -544,7 +545,7 @@ def remove(assume_yes: bool = False) -> int:
       shutil.rmtree(TREE)
       subprocess.run(["git", "config", "--system", "--unset-all", "safe.directory", str(TREE)], capture_output=True)
     REMOVED.unlink(missing_ok=True)
-    ui.say("Omarchy runs stock from the next boot." if name else "Done.")
+    ui.say("Omarchy runs stock from the next boot." if name and not linked else "Done.")
   return 0
 
 

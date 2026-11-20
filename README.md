@@ -23,7 +23,14 @@ sudo umami flavor zen
 
 From stock Omarchy, reboot to start the flavor. From one flavor to another, the switch happens live: Hyprland reloads and the shell restarts.
 
-To go back to stock, run `sudo umami disable` and reboot. Removing the package (`sudo pacman -R umami`) does the same first; after the reboot you can delete `/etc/umami` and `/var/lib/umami`.
+To take a flavor off the machine, run `sudo umami remove` and reboot. It points Omarchy back at stock and removes what the flavor added:
+
+- the packages it installed, unless something else needs them. Packages you had before are never touched.
+- in your session, your theme and each bar entry go back to what they were before the flavor, unless you've changed them since, and a terminal asks whether to remove the plugins it added.
+
+The flavor stays available, so `sudo umami flavor <name>` installs it again. Other users get their theme, bar and plugin question with `umami user-sync --remove` while logged in. Flavors installed before umami recorded packages and the old theme and bar keep those as they are.
+
+To only switch back to stock and keep everything, run `sudo umami disable` and reboot. Removing the package (`sudo pacman -R umami`) does that first; after the reboot you can delete `/etc/umami` and `/var/lib/umami`.
 
 umami won't switch while Omarchy is dev-linked to a checkout. Run `omarchy dev unlink` first.
 
@@ -46,13 +53,14 @@ Each recipe's comments say what it changes and which keys move.
 umami status                     # which flavor runs, and how its last composition went
 sudo umami flavor <name>         # switch to a flavor, or reapply one you edited
 umami plan path/to/recipe.toml   # what a recipe would do, without changing anything
-sudo umami disable               # back to stock from the next boot
+sudo umami remove                # take the flavor off: back to stock, with its packages, plugins, theme and bar
+sudo umami disable               # back to stock from the next boot, keeping everything
 sudo umami enable                # the flavor again from the next boot
 ```
 
 Your own flavors go in `~/.config/umami/flavors/<name>/recipe.toml`, with any files the recipe uses beside it. `sudo umami flavor <name>` looks there first, then in the flavors that come with umami (`/usr/share/umami/flavors`). A path to a recipe directory works too. The flavor that runs is the copy made in `/etc/umami` when you switched, so after editing a recipe, run `sudo umami flavor <name>` again.
 
-When you switch from one flavor to another, plugins the old flavor installed that the new one doesn't use are offered for removal once. Keep them and they become yours. Plugins you installed yourself are never touched.
+When you switch from one flavor to another, its packages and your theme and bar stay; `umami remove` is what takes them away. Plugins the old flavor installed that the new one doesn't use are offered for removal once. Keep them and they become yours. Plugins you installed yourself are never touched.
 
 ## After an Omarchy update
 

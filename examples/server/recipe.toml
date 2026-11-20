@@ -166,6 +166,11 @@ type = "bind.remove"
 keys = "SUPER + SHIFT + G"
 
 [[transform]]
+id = "no-google-messages"
+type = "bind.remove"
+keys = "SUPER + SHIFT + CTRL + G"
+
+[[transform]]
 id = "no-obsidian"
 type = "bind.remove"
 keys = "SUPER + SHIFT + O"

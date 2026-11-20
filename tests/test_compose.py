@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -463,6 +465,51 @@ class RemovedTreeTest(unittest.TestCase):
     self.assertFalse(self.system.clean_removed_tree())
     self.assertTrue(self.tree.exists())
     self.assertFalse(self.system.REMOVED.exists())
+
+
+class TreeSwapTest(unittest.TestCase):
+  def setUp(self):
+    self.tmp = tempfile.TemporaryDirectory()
+    root = Path(self.tmp.name)
+    from umami import system
+    self.system = system
+    self.patches = [mock.patch.object(system, "STATE", root), mock.patch.object(system, "TREE", root / "tree"),
+                    mock.patch.object(system, "RECIPE", root / "recipe.toml"), mock.patch.object(system, "REPORT", root / "report.json"),
+                    mock.patch.object(system, "require_root", lambda: None), mock.patch.object(system, "package_version", lambda: "")]
+    for patch in self.patches:
+      patch.start()
+    self.root = root
+
+  def tearDown(self):
+    for patch in self.patches:
+      patch.stop()
+    self.tmp.cleanup()
+
+  def test_a_new_tree_replaces_the_old_one(self):
+    (self.root / "tree").mkdir()
+    (self.root / "tree/old").write_text("")
+    (self.root / "tree.new").mkdir()
+    (self.root / "tree.new/new").write_text("")
+    self.system.publish(self.root / "tree.new")
+    self.assertEqual(sorted(p.name for p in (self.root / "tree").iterdir()), ["new"])
+    self.assertFalse((self.root / "tree.new").exists())
+
+  def test_a_swap_that_stopped_halfway_gets_its_tree_back(self):
+    (self.root / "tree.old").mkdir()  # renamed away, and then the machine went down
+    (self.root / "recipe.toml").write_text('[flavor]\nname = "t"\n')
+    with mock.patch.object(self.system, "Composer", side_effect=OSError("boom")), \
+         mock.patch.object(self.system, "point_at") as pointed, contextlib.redirect_stdout(io.StringIO()):
+      self.system.recompose(hook=True)
+    self.assertTrue((self.root / "tree").is_dir())
+
+  def test_an_error_while_composing_falls_back_to_stock(self):
+    (self.root / "recipe.toml").write_text('[flavor]\nname = "t"\n')
+    with mock.patch.object(self.system, "Composer", side_effect=KeyError("default/hypr/omarchy.lua")), \
+         mock.patch.object(self.system, "configured_path", lambda: str(self.system.TREE)), \
+         mock.patch.object(self.system, "point_at") as pointed, contextlib.redirect_stdout(io.StringIO()):
+      self.assertEqual(self.system.recompose(hook=True), 0)
+    pointed.assert_called_once_with(self.system.STOCK)
+    self.assertIn("KeyError", json.loads((self.root / "report.json").read_text())["error"])
 
 
 class SystemTest(unittest.TestCase):

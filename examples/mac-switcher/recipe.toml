@@ -116,11 +116,12 @@ value = true
 # there. (Alt+Space, Spotlight's own default, is dictation in stock Omarchy
 # whenever a dictation backend is installed.)
 # Files and mpv open floating and centered, as a Finder window or a QuickTime
-# player does, instead of taking a tile.
+# player does, instead of taking a tile. Files is Folio on newer Omarchy and
+# Nautilus on older.
 [[transform]]
 id = "files-float"
 type = "window.rule"
-match = { class = "^folio$" }
+match = { class = "^(folio|org.gnome.Nautilus)$" }
 rules = { float = true, center = true, size = [1100, 700] }
 
 [[transform]]

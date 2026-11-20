@@ -194,8 +194,11 @@ def setting_parts(table: dict) -> list:
 
 def apps_summary(apps: dict) -> str:
   parts = [f"{len(apps[k])} {label}" for k, label in (("hide", "hidden"), ("webapps", "web apps added"),
-                                                       ("tuis", "TUIs added"), ("open", "file types")) if apps.get(k)]
-  return "launchers: " + ", ".join(parts) if parts else ""
+                                                       ("tuis", "TUIs added")) if apps.get(k)]
+  parts = ["launchers: " + ", ".join(parts)] if parts else []
+  if apps.get("open"):
+    parts.append("opens " + ", ".join(f"{k} with {v.removesuffix('.desktop')}" for k, v in apps["open"].items()))
+  return " · ".join(parts)
 
 
 def system_parts(system: dict) -> list:

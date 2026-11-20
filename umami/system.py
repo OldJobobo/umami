@@ -759,6 +759,8 @@ def apply_system(system: dict) -> list:
     for interface, was in record.pop("wake_on_lan").items():
       subprocess.run(["ethtool", "-s", interface, "wol", was], capture_output=True)
     WAKE_ON_LAN.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+      WAKE_ON_LAN.parent.rmdir()  # only if nothing else is in it
     lines.append("  restored  wake-on-LAN as it was")
   save_system(record)
 

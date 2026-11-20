@@ -599,11 +599,15 @@ class Composer:
   ]
 
   def builtin_patches(self) -> list:
+    """An Omarchy that reads OMARCHY_PATH_TYPE (omacom/omarchy#19538) already
+    treats the tree as a package install, so its scripts need no patch."""
     results = []
     for rel, why, old, new in self.BUILTIN_PATCHES:
       path = self.dest / rel
       text = path.read_text(errors="replace") if path.is_file() else ""
-      if text.count(old) == 1:
+      if "OMARCHY_PATH_TYPE" in text:
+        results.append({"file": rel, "why": why, "status": "upstream"})
+      elif text.count(old) == 1:
         path.write_text(text.replace(old, new.format(tree=self.LIVE_TREE)))
         results.append({"file": rel, "why": why, "status": "applied"})
       else:

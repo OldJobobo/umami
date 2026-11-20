@@ -271,7 +271,7 @@ The exit code is 2 when a required change fails, 1 when umami can't do what was 
 
 ## How it works
 
-- umami copies stock Omarchy from `/usr/share/omarchy` with real files (`cp -rL --reflink=auto`), applies the recipe, and swaps the result into `/var/lib/umami/tree`. It points `/etc/omarchy.conf` and sudo's `secure_path` at that tree. The package's `bin/` is symlinks into `/usr/bin`, and Omarchy's privileged commands refuse to run unless they resolve to `$OMARCHY_PATH/bin/<name>`, hence the real copy.
+- umami copies stock Omarchy from `/usr/share/omarchy` with real files (`cp -rL --reflink=auto`), applies the recipe, and swaps the result into `/var/lib/umami/tree`. It points `/etc/omarchy.conf` and sudo's `secure_path` at that tree, and marks it `OMARCHY_PATH_TYPE=flavor` so Omarchy treats it as a package install, not a dev checkout. The package's `bin/` is symlinks into `/usr/bin`, and Omarchy's privileged commands refuse to run unless they resolve to `$OMARCHY_PATH/bin/<name>`, hence the real copy.
 - Hyprland changes become one generated module, `default/hypr/flavor.lua`, loaded from `default/hypr/omarchy.lua` after Omarchy's defaults and before the theme and `~/.config/hypr`. It calls the same APIs Omarchy does (`hl.config`, `o.rebind`, `hl.unbind`). `over_theme` settings go in `flavor-over-theme.lua`, right after the theme. Locked ones go in `flavor-locked.lua`, at the end of `toggles.lua`, which loads after the user's files.
 - The pacman hook (`90-umami.hook`) recomposes into `tree.new` inside the update transaction and then swaps it in, so Omarchy's migrations run from the composed tree.
 - `umami user-sync` runs as each user at login: defaults, locks, plugins and suites.

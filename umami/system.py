@@ -55,11 +55,14 @@ def git_safe_directory():
 def point_at(path: Path):
   """Write /etc/omarchy.conf and the sudo secure_path drop-in, in the same
   form `omarchy dev link` writes them. Takes effect for the session after a
-  reboot; sudo's drop-in applies at once."""
-  OMARCHY_CONF.write_text(f'{CONF_MARKER}\nexport OMARCHY_PATH="{path}"\n')
+  reboot; sudo's drop-in applies at once. A flavor's tree is also marked
+  OMARCHY_PATH_TYPE=flavor, so an Omarchy that knows the type (omacom/omarchy#19538)
+  treats it as a package install, not a dev checkout."""
   if path == STOCK:
+    OMARCHY_CONF.write_text(f'{CONF_MARKER}\nexport OMARCHY_PATH="{path}"\n')
     SUDOERS.unlink(missing_ok=True)
     return
+  OMARCHY_CONF.write_text(f'{CONF_MARKER}\nexport OMARCHY_PATH="{path}"\nexport OMARCHY_PATH_TYPE="flavor"\n')
   with tempfile.NamedTemporaryFile("w", dir="/etc/sudoers.d", prefix=".umami-", delete=False) as staged:
     staged.write(f'Defaults secure_path="{path}/bin:{SYSTEM_SECURE_PATH}"\n')
   try:

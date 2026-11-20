@@ -642,6 +642,16 @@ class BuiltinPatchTest(Fixture):
     self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || omarchy-dev-unlink --no-reboot', text)
     self.assertIn('[[ $OMARCHY_PATH == "/var/lib/umami/tree" ]] || export OMARCHY_PATH=/usr/share/omarchy', text)
 
+  def test_an_omarchy_that_knows_the_path_type_is_left_unpatched(self):
+    script = ('#!/bin/bash\n'
+              'if [[ $OMARCHY_PATH != "/usr/share/omarchy" && ${OMARCHY_PATH_TYPE:-} != "flavor" ]]; then\n'
+              '  echo dev\nfi\n')
+    write(self.source / "bin/omarchy-channel-current", script, mode=0o755)
+    report, t = self.compose("", code=False)
+    statuses = [p["status"] for p in report["builtin"] if p["file"] == "bin/omarchy-channel-current"]
+    self.assertEqual(statuses, ["upstream"])
+    self.assertEqual((self.dest / "bin/omarchy-channel-current").read_text(), script)
+
 
 class FindFlavorTest(unittest.TestCase):
   def setUp(self):

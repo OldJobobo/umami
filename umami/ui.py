@@ -171,7 +171,7 @@ def builtin_lines(report: dict) -> list:
   """umami's own edits to Omarchy that no longer fit, a line a file."""
   by_file = {}
   for p in report.get("builtin") or []:
-    if p["status"] != "applied":
+    if p["status"] == "stale":
       by_file.setdefault(p["file"], []).append(p["why"])
   return [f"umami's own edit to {file} no longer fits, so this may not hold: {'; '.join(whys)}"
           for file, whys in by_file.items()]

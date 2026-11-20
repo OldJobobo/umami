@@ -167,14 +167,20 @@ def main(argv=None) -> int:
   pick.add_argument("flavor")
   pick.set_defaults(func=lambda args: system.flavor(args.flavor))
 
+  remove = sub.add_parser("remove", help="root: remove the flavor: back to stock, its packages, plugins, theme and bar")
+  remove.add_argument("--yes", action="store_true", help="remove its packages without asking")
+  remove.set_defaults(func=lambda args: system.remove(assume_yes=args.yes))
+
   user_sync = sub.add_parser("user-sync", help="as your user: install the flavor's plugins (runs at login)")
   user_sync.add_argument("--recipe", default=str(user.TREE_RECIPE), help="recipe to read (default: the composed tree's copy)")
   user_sync.add_argument("--dry-run", action="store_true", help="say what would be installed, change nothing")
   user_sync.add_argument("--review", action="store_true",
                          help="ask about plugins you haven't said yes or no to (opened for you at login)")
   user_sync.add_argument("--yes", action="store_true", help="say yes to those plugins without asking")
-  user_sync.set_defaults(func=lambda args: user.sync(args.recipe, dry_run=args.dry_run,
-                                                     interactive=args.review, assume_yes=args.yes))
+  user_sync.add_argument("--remove", action="store_true",
+                         help="after umami remove: put back your theme and bar, and ask about the flavor's plugins")
+  user_sync.set_defaults(func=lambda args: user.remove(interactive=args.review, assume_yes=args.yes) if args.remove
+                         else user.sync(args.recipe, dry_run=args.dry_run, interactive=args.review, assume_yes=args.yes))
 
   refresh = sub.add_parser("refresh", help="as your user, in your session: pick up a flavor switched live (umami flavor runs it)")
   refresh.set_defaults(func=lambda args: user.refresh())

@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from umami import lua
@@ -753,20 +754,30 @@ class InstallPackagesTest(unittest.TestCase):
     self.log = root / "pacman.log"
     bin_dir = root / "bin"
     bin_dir.mkdir()
-    # Installed: present-pkg. In a repository: repo-pkg (omarchy). Neither: aur-pkg.
+    # Installed: present-pkg and the ones in $INSTALLED. In a repository:
+    # repo-pkg (omarchy). Neither: aur-pkg. Required By comes from $NEEDS_<name>.
     (bin_dir / "pacman").write_text(
         '#!/bin/bash\necho "$*" >> "$PACMAN_LOG"\n'
         'case $1 in\n'
-        '  -Q) [[ $3 == present-pkg ]] ;;\n'
+        '  -Q) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
+        '  -Qi) var="NEEDS_${3//-/_}"; printf "Name            : %s\\nRequired By     : %s\\n" "$3" "${!var:-None}" ;;\n'
         '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
         'esac\n')
     (bin_dir / "pacman").chmod(0o755)
     (bin_dir / "omarchy-pkg-add").write_text('#!/bin/bash\necho "add $*" >> "$PACMAN_LOG"\n')
     (bin_dir / "omarchy-pkg-add").chmod(0o755)
+    (bin_dir / "omarchy-pkg-drop").write_text('#!/bin/bash\necho "drop $*" >> "$PACMAN_LOG"\n')
+    (bin_dir / "omarchy-pkg-drop").chmod(0o755)
     self.saved = dict(os.environ)
     os.environ.update({"PATH": f"{bin_dir}:{os.environ['PATH']}", "PACMAN_LOG": str(self.log)})
+    from umami import system
+    self.patches = [mock.patch.object(system, "STATE", root), mock.patch.object(system, "PACKAGES", root / "packages.json")]
+    for patch in self.patches:
+      patch.start()
 
   def tearDown(self):
+    for patch in self.patches:
+      patch.stop()
     os.environ.clear()
     os.environ.update(self.saved)
     self.tmp.cleanup()
@@ -775,9 +786,20 @@ class InstallPackagesTest(unittest.TestCase):
     return [l for l in self.log.read_text().splitlines() if l.startswith("add ")] if self.log.exists() else []
 
   def test_installs_only_what_is_missing_from_a_repository(self):
-    from umami.system import install_packages
-    install_packages([{"name": "present-pkg"}, {"name": "repo-pkg"}])
+    from umami.system import install_packages, installed_packages
+    install_packages([{"name": "present-pkg"}, {"name": "repo-pkg"}], "server")
     self.assertEqual(self.installs(), ["add repo-pkg"])
+    # Only what the flavor installed is recorded, so removing it leaves present-pkg.
+    self.assertEqual(installed_packages(), {"repo-pkg": "server"})
+
+  def test_removing_drops_what_flavors_installed_unless_something_else_needs_it(self):
+    from umami.system import drop_packages, installed_packages, save_packages
+    save_packages({"tool": "server", "lib": "server", "shared": "server", "gone": "zen"})
+    os.environ.update({"INSTALLED": "tool lib shared", "NEEDS_lib": "tool", "NEEDS_shared": "tool other-app"})
+    drop_packages(assume_yes=True)
+    # lib is needed only by tool, which goes too; shared is needed by something else.
+    self.assertEqual([l for l in self.log.read_text().splitlines() if l.startswith("drop ")], ["drop lib tool"])
+    self.assertEqual(installed_packages(), {"shared": "server"})
 
   def test_a_package_in_no_repository_installs_nothing(self):
     from umami.system import install_packages

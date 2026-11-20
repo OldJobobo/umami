@@ -154,6 +154,19 @@ class UserLayerTest(unittest.TestCase):
     path.write_text(f'[flavor]\nname = "test"\n\n[defaults]\ntheme = "{theme}"\n')
     return path
 
+  def test_removing_puts_the_theme_back_unless_you_changed_it(self):
+    (Path(str(self.log) + ".theme")).write_text("Nord\n")
+    self.assertEqual(user.sync(self.theme_recipe("Vantablack"), shell_timeout=1), 0)
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(Path(str(self.log) + ".theme").read_text().strip(), "Nord")
+
+    self.assertEqual(user.sync(self.theme_recipe("Vantablack"), shell_timeout=1), 0)
+    (Path(str(self.log) + ".theme")).write_text("Gruvbox\n")  # the user picks another
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(Path(str(self.log) + ".theme").read_text().strip(), "Gruvbox")
+
   def test_the_default_theme_is_set_once(self):
     self.assertEqual(user.sync(self.theme_recipe("Vantablack")), 0)
     self.assertEqual(self.log.read_text().count("theme Vantablack"), 1)
@@ -532,3 +545,36 @@ theme = "Solitude"
     self.assertEqual(asked, [["suite:shibumi"]])
     self.assertEqual(self.calls(), ["suite uninstall --yes timeout=30s"])
     self.assertNotIn("suite:shibumi", user.load_state())
+
+
+class RestoreBarTest(unittest.TestCase):
+  BEFORE = {"left": [{"id": "omarchy.menu"}, {"id": "omarchy.workspaces"}],
+            "center": [{"id": "omarchy.clock", "format": "dddd HH:mm"}],
+            "right": [{"id": "omarchy.weather"}, {"id": "omarchy.audio"}]}
+  DONE = [["omarchy-plugin-disable", "omarchy.weather"],
+          ["omarchy-plugin-disable", "omarchy.menu"],
+          ["omarchy-bar", "put", "omarchy.tailscale", "--section", "right", "--index", "0"],
+          ["omarchy-bar", "move", "omarchy.clock", "--section", "left", "--index", "0"],
+          ["omarchy-bar", "set", "omarchy.clock", "format", "HH:mm"]]
+
+  def test_each_entry_still_as_the_flavor_left_it_is_undone(self):
+    now = {"left": [{"id": "omarchy.clock", "format": "HH:mm"}, {"id": "omarchy.workspaces"}],
+           "right": [{"id": "omarchy.tailscale"}, {"id": "omarchy.audio"}]}
+    undo, changed = user.restore_commands(self.DONE, self.BEFORE, now)
+    self.assertEqual(undo, [
+        ["omarchy-plugin-disable", "omarchy.tailscale"],
+        ["omarchy-plugin-enable", "omarchy.weather", "--section", "right", "--index", "0"],
+        ["omarchy-plugin-enable", "omarchy.menu", "--section", "left", "--index", "0"],
+        ["omarchy-bar", "move", "omarchy.clock", "--section", "center", "--index", "0"],
+        ["omarchy-bar", "set", "omarchy.clock", "format", "dddd HH:mm"],
+    ])
+    self.assertEqual(changed, [])
+
+  def test_entries_you_changed_since_are_left_alone(self):
+    # The user turned the menu back on, moved the clock right, and set its format.
+    now = {"left": [{"id": "omarchy.menu"}, {"id": "omarchy.workspaces"}],
+           "right": [{"id": "omarchy.clock", "format": "HH:mm:ss"}, {"id": "omarchy.audio"}]}
+    undo, changed = user.restore_commands(self.DONE, self.BEFORE, now)
+    self.assertEqual(undo, [["omarchy-plugin-enable", "omarchy.weather", "--section", "right", "--index", "0"]])
+    self.assertEqual(sorted(set(changed)), ["omarchy.clock", "omarchy.menu"])
+

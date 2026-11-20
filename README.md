@@ -43,7 +43,7 @@ umami won't switch while Omarchy is dev-linked to a checkout. Run `omarchy dev u
 | [`mac-switcher`](examples/mac-switcher/recipe.toml) | For people coming from macOS: a dock, Spotlight on Super+Space, Alt+Tab, a menu bar with the clock on the right, and a light theme |
 | [`command-palette`](examples/command-palette/recipe.toml) | The Omarchy menu replaced by Keystroke, a Raycast-style palette, without changing any Omarchy file |
 | [`company`](examples/company/recipe.toml) | Omarchy as an employer might hand it out: a theme put back at every login, keys and a setting users can't override, a widget that isn't there |
-| [`server`](examples/server/recipe.toml) | For a machine that runs services: no animations, blur or shadows, no music, chat or web-app keys, a quieter bar with Tailscale on it, keys for the speed tests, and tools for containers, disks, temperatures, backups and the network |
+| [`server`](examples/server/recipe.toml) | For a machine that runs services: boots to a console instead of the desktop, never sleeps, runs SSH (keys only), Tailscale and Docker, turns off Bluetooth and printing, and installs tools for disks, temperatures, backups and the network. Start the desktop when a screen is plugged in, and it's a quiet one |
 
 Each recipe's comments say what it changes and which keys move.
 
@@ -135,7 +135,7 @@ A flavor is declarative unless its `[flavor]` table says `code = true`. A declar
 - `bind.remove`, and `bind.add` or `bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
 - `shell.plugins.remove` of bar widgets, panels, overlays and menus (not services such as the lock screen)
 - `plugin.hypr`, which loads a Hyprland Lua file that one of the recipe's own plugins ships (`plugin = "<id>"`, `file = "hypr/x.lua"`), from the user's install of it. It loads only if the user said yes to the plugin, and it runs as that user inside Hyprland, never as root. The code is the plugin's, not the flavor's.
-- `[defaults]`, `[locked]`, `[[plugin]]`, `[[package]]` and `[[suite]]`
+- `[defaults]`, `[locked]`, `[system]`, `[[plugin]]`, `[[package]]` and `[[suite]]`
 
 Everything else runs code someone wrote: diffs, patches, replaced or wrapped commands, added or removed files, raw Lua, a binding that runs a shell command or raw Lua, and removing a service. A recipe that uses any of these must say `code = true`, and `umami plan` says so on its first line. Omarchy also runs through sudo, so trust a flavor that runs code the way you'd trust a package: install it from a signed package, never from a bare URL.
 
@@ -225,6 +225,24 @@ uninstall = ["uninstall", "--yes"] # offered when a flavor without it takes over
 Some shells and plugin sets ship as a pacman package with their own installer. `sudo umami flavor` installs a recipe's packages before it changes anything else, and only from a repository in `pacman.conf`, whose signatures pacman checks. umami never installs from the AUR, a file or a URL. A package no repository has stops the switch and leaves the current flavor as it was. Packages stay when another flavor takes over, since other software may need them.
 
 A `[[suite]]` runs that package's installer as each user. It is asked about together with the flavor's plugins, under Omarchy's plugin warning, and nothing runs before a yes. The command must belong to the named package (`pacman -Qo`), so the code that runs is the package's, and the recipe only names its steps. When a package update changes the version, the next login runs `update`. Switching to a flavor without the suite offers its `uninstall` once.
+
+### The machine: `[system]`
+
+```toml
+[system]
+boot = "console"                  # a text login; sudo systemctl start sddm starts the desktop
+sleep = false                     # never suspend: not on idle, the lid or a key
+
+[system.services]
+enable = ["sshd", "tailscaled", "docker"]   # enabled and started
+disable = ["bluetooth", "cups"]             # disabled and stopped
+```
+
+`sudo umami flavor` applies these after the flavor composes, and records what each was before. A service must already be installed, by Omarchy or one of the recipe's `[[package]]`s, or the switch stops before anything changes. `sleep = false` writes drop-ins to `/etc/systemd/logind.conf.d` and `/etc/systemd/sleep.conf.d`; the lid setting takes effect from the next boot.
+
+Enabling `sshd` turns password logins off first, the way `omarchy-setup-security-sshd` does, and checks with `sshd -T` that sshd really applies it; if another config overrides it, sshd stays off. Port 22 opens in the firewall, rate limited. Authorize a key with `omarchy-setup-security-sshd`.
+
+Switching to another flavor undoes what it doesn't also set, and `umami remove` undoes all of it: each service goes back to how it was, the boot target and sleep come back, and umami's sshd and firewall settings go. A service the flavor started is disabled but not stopped, so an SSH or Tailscale session running the removal isn't cut off; it stops at the next boot.
 
 ### Transforms
 

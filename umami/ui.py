@@ -157,16 +157,28 @@ def extras(report: dict, locked: list) -> list:
   installs = [f for f in (report.get("packages") and "packages " + ", ".join(report["packages"]),
                           report.get("suites") and "plugin suites " + ", ".join(suite_text(x) for x in report["suites"])) if f]
   over = [t["id"] for t in report["transforms"] if t.get("over_theme")]
+  machine = system_parts(report.get("system") or {})
   lines = []
   if first_login:
     lines.append(f"At each user's first login, theirs to change afterwards: {' · '.join(first_login)}")
   if installs:
     lines.append(f"Installed with the flavor, each user asked before a plugin or suite: {' · '.join(installs)}")
+  if machine:
+    lines.append(f"On the machine, undone by umami remove: {' · '.join(machine)}")
   if over:
     lines.append(f"Over any theme, though users can still change them: {', '.join(over)}")
   if locked:
     lines.append(f"Locked, users can't change: {', '.join(locked)}")
   return lines
+
+
+def system_parts(system: dict) -> list:
+  short = lambda units: ", ".join(u.removesuffix(".service") for u in units)
+  services = system.get("services") or {}
+  return [f for f in (system.get("boot") == "console" and "boots to a console (sudo systemctl start sddm for the desktop)",
+                      system.get("sleep") is False and "never sleeps",
+                      services.get("enable") and "on: " + short(services["enable"]),
+                      services.get("disable") and "off: " + short(services["disable"])) if f]
 
 
 def builtin_lines(report: dict) -> list:

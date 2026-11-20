@@ -24,6 +24,16 @@ TREE = STATE / "tree"
 REPORT = STATE / "report.json"
 PACKAGES = STATE / "packages.json"
 REMOVED = STATE / "removed"
+SYSTEM = STATE / "system.json"
+NO_SLEEP = {
+    Path("/etc/systemd/logind.conf.d/90-umami-no-sleep.conf"):
+        "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n"
+        "HandleSuspendKey=ignore\nHandleHibernateKey=ignore\nIdleAction=ignore\n",
+    Path("/etc/systemd/sleep.conf.d/90-umami-no-sleep.conf"):
+        "[Sleep]\nAllowSuspend=no\nAllowHibernation=no\nAllowSuspendThenHibernate=no\nAllowHybridSleep=no\n",
+}
+# sshd takes the first value it reads, so this sorts before the others.
+SSHD_KEYS_ONLY = Path("/etc/ssh/sshd_config.d/05-umami-keys-only.conf")
 OMARCHY_CONF = Path("/etc/omarchy.conf")
 SUDOERS = Path("/etc/sudoers.d/omarchy-dev-path")
 PROC = Path("/proc")
@@ -244,6 +254,7 @@ def flavor(flavor: str) -> int:
   ui.say(f"Flavor {recipe.name}, " + ("runs code, trusted like a package" if recipe.code
                                       else "declarative: nothing in it runs as written"))
   install_packages(recipe.packages, recipe.name)  # before anything changes: a failure leaves the current flavor
+  check_units(recipe.system)
   staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")
   if staged.exists():
     shutil.rmtree(staged)
@@ -261,6 +272,8 @@ def flavor(flavor: str) -> int:
   if code != 0:
     return code
   enable(quiet=True)  # what happens next is said below
+  for line in apply_system(recipe.system):
+    print(line)
   if live and switch_live(*live):
     ui.say(f"{recipe.name} is running. Hyprland and the shell are reloading.")
   else:
@@ -314,6 +327,137 @@ def install_packages(packages: list, flavor: str = ""):
   if subprocess.run(["omarchy-pkg-add", *missing]).returncode != 0:
     raise UmamiError(f"installing {', '.join(missing)} failed. The current flavor is unchanged.")
   save_packages({**installed_packages(), **{name: flavor for name in missing}})
+
+
+# ---- [system]: the machine around Omarchy
+
+def systemctl(*args) -> subprocess.CompletedProcess:
+  return subprocess.run(["systemctl", *args], capture_output=True, text=True)
+
+
+def load_system() -> dict:
+  try:
+    record = json.loads(SYSTEM.read_text())
+  except (OSError, ValueError):
+    return {}
+  return record if isinstance(record, dict) else {}
+
+
+def save_system(record: dict):
+  if record:
+    STATE.mkdir(parents=True, exist_ok=True)
+    SYSTEM.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+  else:
+    SYSTEM.unlink(missing_ok=True)
+
+
+def check_units(system: dict):
+  """Before anything changes: every service the flavor names is installed
+  (a [[package]] may have just installed it)."""
+  for units in (system.get("services") or {}).values():
+    for unit in units:
+      if systemctl("cat", "--", unit).returncode != 0:
+        raise UmamiError(f"[system] names {unit}, which isn't installed (add its [[package]]).")
+
+
+def keys_only(record: dict) -> list:
+  """sshd for a flavor takes keys only, as omarchy-setup-security-sshd sets
+  it up, and its port opens rate-limited. Checked with sshd itself before it
+  listens: a config it ignores would leave passwords on."""
+  lines = []
+  subprocess.run(["ssh-keygen", "-A"], capture_output=True)
+  SSHD_KEYS_ONLY.parent.mkdir(parents=True, exist_ok=True)
+  SSHD_KEYS_ONLY.write_text("# Written by umami for the flavor's sshd; umami remove deletes it.\n"
+                            "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n")
+  effective = subprocess.run(["sshd", "-T"], capture_output=True, text=True)
+  settings = {line.lower() for line in effective.stdout.splitlines()}
+  if effective.returncode != 0 or not {"passwordauthentication no", "kbdinteractiveauthentication no"} <= settings:
+    SSHD_KEYS_ONLY.unlink()
+    raise UmamiError("sshd would still accept passwords (another sshd config overrides umami's), so it stays off.")
+  record["ssh"] = {"keys_only": True}
+  if shutil.which("ufw"):
+    if "22/tcp" not in subprocess.run(["ufw", "status"], capture_output=True, text=True).stdout:
+      subprocess.run(["ufw", "limit", "22/tcp", "comment", "umami-sshd"], capture_output=True)
+      subprocess.run(["ufw", "reload"], capture_output=True)
+      record["ssh"]["ufw"] = True
+      lines.append("  opened    port 22 in the firewall, rate limited")
+  if not any((Path(e.pw_dir) / ".ssh/authorized_keys").is_file() for e in pwd.getpwall() if e.pw_uid >= 1000):
+    lines.append("  note      no SSH key is authorized yet, and passwords are off: omarchy-setup-security-sshd adds one")
+  return lines
+
+
+def undo_ssh(entry: dict):
+  SSHD_KEYS_ONLY.unlink(missing_ok=True)
+  if systemctl("is-active", "--quiet", "sshd.service").returncode == 0:
+    systemctl("reload", "sshd.service")
+  if entry.get("ufw"):
+    subprocess.run(["ufw", "delete", "limit", "22/tcp"], capture_output=True)
+    subprocess.run(["ufw", "reload"], capture_output=True)
+
+
+def apply_system(system: dict) -> list:
+  """Bring the machine to a flavor's [system]. What the last flavor set and
+  this one doesn't want is undone first; what was there before any flavor
+  stays recorded, so `umami remove` puts it back. A service a flavor turned
+  on is only disabled, not stopped: stopping sshd or tailscaled could cut
+  off the session doing it, so it stops at the next boot."""
+  record, lines = load_system(), []
+  services = record.setdefault("services", {})
+  wanted = {unit: action for action, units in (system.get("services") or {}).items() for unit in units}
+
+  for unit, entry in list(services.items()):
+    if wanted.get(unit) == entry["action"]:
+      continue
+    if entry["action"] == "enable" and entry["was"] != "enabled":
+      systemctl("disable", "--", unit)
+      lines.append(f"  disabled  {unit.removesuffix('.service')} (stops at the next boot)")
+    elif entry["action"] == "disable" and entry["was"] == "enabled":
+      systemctl("enable", "--now", "--", unit)
+      lines.append(f"  enabled   {unit.removesuffix('.service')} again")
+    del services[unit]
+    save_system(record)
+  if record.get("ssh") and wanted.get("sshd.service") != "enable":
+    undo_ssh(record.pop("ssh"))
+    lines.append("  removed   sshd's keys-only setting")
+  if record.get("boot") and system.get("boot") != "console":
+    systemctl("set-default", record.pop("boot"))
+    lines.append("  restored  booting to the desktop")
+  if record.get("no_sleep") and system.get("sleep") is not False:
+    for path in NO_SLEEP:
+      path.unlink(missing_ok=True)
+    record.pop("no_sleep")
+    lines.append("  restored  sleep")
+  save_system(record)
+
+  for unit, action in wanted.items():
+    if unit in services:
+      continue
+    was = systemctl("is-enabled", "--", unit).stdout.strip() or "unknown"
+    if unit == "sshd.service" and action == "enable" and not record.get("ssh"):
+      lines += keys_only(record)  # before it listens
+      save_system(record)
+    result = systemctl(action, "--now", "--", unit)
+    if result.returncode != 0:
+      raise UmamiError(f"systemctl {action} {unit} failed: " + (result.stderr or result.stdout).strip()[:300])
+    services[unit] = {"action": action, "was": was}
+    save_system(record)
+    lines.append(f"  {action + 'd':<9} {unit.removesuffix('.service')}")
+  if system.get("boot") == "console" and not record.get("boot"):
+    record["boot"] = systemctl("get-default").stdout.strip() or "graphical.target"
+    systemctl("set-default", "multi-user.target")
+    save_system(record)
+    lines.append("  boot      to a console from the next boot (sudo systemctl start sddm for the desktop)")
+  if system.get("sleep") is False and not record.get("no_sleep"):
+    for path, text in NO_SLEEP.items():
+      path.parent.mkdir(parents=True, exist_ok=True)
+      path.write_text("# Written by umami: the flavor never sleeps. umami remove deletes it.\n" + text)
+    record["no_sleep"] = True
+    save_system(record)
+    lines.append("  sleep     off: no suspend on idle, lid or key (the lid from the next boot)")
+  if not services:
+    record.pop("services", None)
+  save_system(record)
+  return lines
 
 
 def user_env(uid: int) -> dict:
@@ -507,7 +651,7 @@ def remove(assume_yes: bool = False) -> int:
   require_root()
   cleaned = clean_removed_tree()
   name = load(RECIPE).name if RECIPE.is_file() else ""
-  if not (name or installed_packages() or (TREE.exists() and not REMOVED.is_file())):
+  if not (name or installed_packages() or SYSTEM.is_file() or (TREE.exists() and not REMOVED.is_file())):
     if cleaned:
       ui.say("Deleted the removed flavor's files.")
       return 0
@@ -525,6 +669,8 @@ def remove(assume_yes: bool = False) -> int:
                     SELF, "user-sync", "--remove", *flags])
   else:
     ui.say("For each user, while logged in: umami user-sync --remove puts back the theme and bar and asks about the plugins.")
+  for line in apply_system({}):  # before the packages its services come from
+    print(line)
   drop_packages(assume_yes)
 
   current = configured_path()

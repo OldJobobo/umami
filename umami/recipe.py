@@ -71,6 +71,7 @@ class Recipe:
   suites: list = field(default_factory=list)
   defaults: dict = field(default_factory=dict)
   locked: dict = field(default_factory=dict)
+  system: dict = field(default_factory=dict)
   code: bool = False
   code_transforms: list = field(default_factory=list)
 
@@ -206,7 +207,49 @@ def load(path) -> Recipe:
   # flavor (the user's later choice stays); [locked] at every login.
   recipe.defaults = check_user_table("defaults", data.get("defaults", {}))
   recipe.locked = check_user_table("locked", data.get("locked", {}))
+  recipe.system = check_system(data.get("system", {}))
   return recipe
+
+
+UNIT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._-]*")
+UNIT_KINDS = (".service", ".socket", ".timer", ".path")
+
+
+def check_system(table) -> dict:
+  """[system]: the machine around Omarchy. Data like the rest: umami turns
+  each key into systemd's own settings, records what was there, and
+  `umami remove` puts it back."""
+  if not isinstance(table, dict):
+    raise RecipeError("[system] must be a table")
+  unknown = set(table) - {"boot", "sleep", "services"}
+  if unknown:
+    raise RecipeError(f"[system]: unknown keys {', '.join(sorted(unknown))}")
+  system = {}
+  if "boot" in table:
+    if table["boot"] not in ("console", "desktop"):
+      raise RecipeError('[system] boot is "console" or "desktop"')
+    if table["boot"] == "console":
+      system["boot"] = "console"
+  if "sleep" in table:
+    if not isinstance(table["sleep"], bool):
+      raise RecipeError("[system] sleep is true or false")
+    if not table["sleep"]:
+      system["sleep"] = False
+  services = table.get("services", {})
+  if not isinstance(services, dict) or set(services) - {"enable", "disable"}:
+    raise RecipeError("[system] services has enable and disable lists")
+  seen = set()
+  for action in ("enable", "disable"):
+    names = services.get(action, [])
+    if not (isinstance(names, list) and all(isinstance(n, str) and UNIT_NAME.fullmatch(n) for n in names)):
+      raise RecipeError(f"[system] services.{action} must be a list of systemd unit names")
+    units = [n if n.endswith(UNIT_KINDS) else n + ".service" for n in names]
+    if seen & set(units):
+      raise RecipeError(f"[system] services: {', '.join(sorted(seen & set(units)))} is both enabled and disabled")
+    seen |= set(units)
+    if units:
+      system.setdefault("services", {})[action] = units
+  return system
 
 
 def check_user_table(name: str, table) -> dict:

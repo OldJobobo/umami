@@ -660,6 +660,7 @@ class Composer:
         "defaults": self.recipe.defaults,
         "plugins": [p["id"] for p in self.recipe.plugins],
         "packages": [p["name"] for p in self.recipe.packages],
+        "system": self.recipe.system,
         "suites": [{"id": x["id"], "command": x["command"], "package": x["package"]} for x in self.recipe.suites],
         "builtin": builtin,
     }

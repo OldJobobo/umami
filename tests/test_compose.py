@@ -441,6 +441,86 @@ class RemovedTreeTest(unittest.TestCase):
     self.assertFalse(self.system.REMOVED.exists())
 
 
+class SystemTest(unittest.TestCase):
+  """[system] against a fake systemctl that logs and keeps unit state."""
+
+  def setUp(self):
+    self.tmp = tempfile.TemporaryDirectory()
+    root = Path(self.tmp.name)
+    self.log = root / "calls.log"
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    # is-enabled answers from $WAS_<unit>, default disabled; get-default from $DEFAULT.
+    (bin_dir / "systemctl").write_text(
+        '#!/bin/bash\necho "$*" >> "$LOG"\n'
+        'case $1 in\n'
+        '  is-enabled) u=${3%.service}; var="WAS_${u//-/_}"; echo "${!var:-disabled}" ;;\n'
+        '  get-default) echo "${DEFAULT:-graphical.target}" ;;\n'
+        '  is-active) exit 1 ;;\n'
+        'esac\n')
+    (bin_dir / "systemctl").chmod(0o755)
+    (bin_dir / "sshd").write_text('#!/bin/bash\nprintf "passwordauthentication ${SSHD_PASSWORDS:-no}\\nkbdinteractiveauthentication no\\n"\n')
+    (bin_dir / "sshd").chmod(0o755)
+    (bin_dir / "ssh-keygen").write_text("#!/bin/bash\n")
+    (bin_dir / "ssh-keygen").chmod(0o755)
+    self.saved = dict(os.environ)
+    os.environ.update({"PATH": f"{bin_dir}:/usr/bin", "LOG": str(self.log)})
+    from umami import system
+    self.system = system
+    self.keys_only = root / "05-umami-keys-only.conf"
+    self.no_sleep = {root / "logind.conf": "[Login]\n", root / "sleep.conf": "[Sleep]\n"}
+    self.patches = [mock.patch.object(system, name, value) for name, value in
+                    (("STATE", root), ("SYSTEM", root / "system.json"), ("SSHD_KEYS_ONLY", self.keys_only),
+                     ("NO_SLEEP", self.no_sleep))]
+    self.patches.append(mock.patch("shutil.which", lambda name, *a, **k: None))
+    for patch in self.patches:
+      patch.start()
+
+  def tearDown(self):
+    for patch in self.patches:
+      patch.stop()
+    os.environ.clear()
+    os.environ.update(self.saved)
+    self.tmp.cleanup()
+
+  def calls(self):
+    return [l for l in self.log.read_text().splitlines() if l.split()[0] in ("enable", "disable", "set-default")]
+
+  SERVER = {"boot": "console", "sleep": False,
+            "services": {"enable": ["sshd.service", "docker.service"], "disable": ["bluetooth.service"]}}
+
+  def test_remove_puts_back_what_was_there(self):
+    os.environ.update({"WAS_docker": "enabled", "WAS_bluetooth": "enabled"})
+    self.system.apply_system(self.SERVER)
+    self.assertTrue(self.keys_only.exists())
+    self.assertTrue(all(path.exists() for path in self.no_sleep))
+    self.log.write_text("")
+    self.system.apply_system({})
+    # sshd was off: disabled, not stopped, so an SSH session doing this survives.
+    # docker was already on before the flavor: it stays. Bluetooth comes back.
+    self.assertEqual(sorted(self.calls()), sorted(["disable -- sshd.service", "enable --now -- bluetooth.service",
+                                                   "set-default graphical.target"]))
+    self.assertFalse(self.keys_only.exists())
+    self.assertFalse(any(path.exists() for path in self.no_sleep))
+    self.assertFalse(self.system.SYSTEM.exists())
+
+  def test_a_switch_keeps_what_both_flavors_want(self):
+    os.environ["WAS_bluetooth"] = "enabled"
+    self.system.apply_system(self.SERVER)
+    self.log.write_text("")
+    self.system.apply_system({"services": {"enable": ["sshd.service"]}})
+    self.assertEqual(sorted(self.calls()), sorted(["disable -- docker.service", "enable --now -- bluetooth.service",
+                                                   "set-default graphical.target"]))
+    self.assertTrue(self.keys_only.exists())
+
+  def test_sshd_stays_off_if_it_would_still_take_passwords(self):
+    os.environ["SSHD_PASSWORDS"] = "yes"
+    with self.assertRaisesRegex(UmamiError, "passwords"):
+      self.system.apply_system({"services": {"enable": ["sshd.service"]}})
+    self.assertFalse(self.keys_only.exists())
+    self.assertNotIn("enable --now -- sshd.service", self.calls())
+
+
 class LuaTest(unittest.TestCase):
   def test_literal(self):
     self.assertEqual(lua.literal({"general": {"gaps_out": 4, "layout": "dwindle"}}),
@@ -892,3 +972,13 @@ class InstallPackagesTest(unittest.TestCase):
     with self.assertRaises(UmamiError):
       install_packages([{"name": "repo-pkg"}, {"name": "aur-pkg"}])
     self.assertEqual(self.installs(), [])
+
+
+class SystemRecipeTest(PackageAndSuiteRecipeTest):
+  def test_a_service_is_on_or_off_not_both(self):
+    with self.assertRaisesRegex(RecipeError, "both enabled and disabled"):
+      self.load('[system.services]\nenable = ["sshd"]\ndisable = ["sshd.service"]\n')
+
+  def test_a_unit_is_a_name_not_a_command(self):
+    with self.assertRaisesRegex(RecipeError, "unit names"):
+      self.load('[system.services]\nenable = ["sshd; rm -rf /"]\n')

@@ -1,39 +1,55 @@
-# Server: Omarchy for a machine that runs services.
+# Server: Omarchy as a machine that runs services.
 #
 # A home or office box that runs containers and services, reached over SSH
-# and Tailscale most of the time, with a quick, quiet desktop for when a
-# screen is plugged in. It is still Omarchy underneath: updates, channels,
-# snapshots and the desktop keep working.
+# and Tailscale, with Omarchy's desktop there when a screen is plugged in.
+# It is still Omarchy underneath: updates, channels and snapshots keep
+# working.
 #
-# Less of the desktop: no animations, blur or shadows, no music, chat, notes
-# or web-app shortcuts, and a bar without the world clock, weather, AI usage
-# and keyboard layout. Nothing is locked away: Omarchy's own menus and panels
-# link to its widgets, so taking one out would leave dead buttons behind.
+# The machine:
 #
-# More for the machine: Tailscale on the bar, tools for containers, disks,
-# temperatures, backups and the network, and keys for them:
+#   - boots to a text console, not the desktop: Hyprland, the shell and the
+#     login screen don't run until you start them with
+#       sudo systemctl start sddm
+#   - never sleeps: not on idle, not when the lid closes, not on a key
+#   - runs sshd (keys only, port 22 open in the firewall, rate limited),
+#     Tailscale and Docker
+#   - turns off Bluetooth and printing
+#
+# Authorize a key before you rely on SSH: password logins are off.
+#
+#   omarchy-setup-security-sshd --gh-keys <github-user>
+#   sudo tailscale up
+#
+# umami remove puts all of it back as it was, and removes the packages the
+# flavor installed.
+#
+# When you do start the desktop, it is a quiet one: no animations, blur or
+# shadows, no music, chat, notes or web-app keys, Tailscale on the bar, and
+# keys for the tools:
 #
 #   Super + Shift + D          Docker (lazydocker)            (stock)
 #   Super + Shift + T          Activity (btop)                (stock)
 #   Super + Ctrl + Alt + S     internet speed test
 #   Super + Ctrl + Alt + K     disk speed test
-#   Super + Ctrl + I           stay awake: no idle lock       (stock)
 #
-# The browser, editor, file manager and calculator keys stay: a server's web
-# interfaces and config files still need them.
+# The desktop apps stay installed: Omarchy's updates own them. With the
+# desktop not starting, they don't run.
 #
 # Server is declarative: every line is data that umami checks and turns
 # into configuration, and nothing in it runs as written.
-#
-# Not done here, and yours to do once: turning on the services. Omarchy has
-# commands for each, run from a terminal:
-#
-#   omarchy-setup-security-sshd --gh-keys <github-user>   SSH in, firewall open
-#   sudo systemctl enable --now tailscaled && sudo tailscale up
-#   omarchy-setup-security-sudoless-docker                docker without sudo
 
 [flavor]
 name = "server"
+
+# The machine around Omarchy. Recorded when the flavor is installed, and put
+# back by umami remove.
+[system]
+boot = "console"
+sleep = false
+
+[system.services]
+enable = ["sshd", "tailscaled", "docker"]
+disable = ["bluetooth", "cups"]
 
 # Applied once, at each user's first login on the flavor.
 [defaults]
@@ -57,6 +73,10 @@ set = [
 
 # Installed with the flavor, from the official repositories. Docker, compose,
 # btop, tmux and ufw already come with Omarchy.
+[[package]]
+name = "openssh"
+note = "The SSH server. Omarchy usually has it already."
+
 [[package]]
 name = "tailscale"
 note = "Mesh VPN: reach this machine from anywhere, and the Tailscale widget on the bar."

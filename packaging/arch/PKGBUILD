@@ -23,7 +23,7 @@ package() {
 
   # The example flavors.
   local flavor
-  for flavor in zen shibumi command-palette mac-switcher company; do
+  for flavor in zen shibumi command-palette mac-switcher company server; do
     install -d "$pkgdir/usr/share/umami/flavors/$flavor"
     cp -r --no-preserve=ownership "examples/$flavor/." "$pkgdir/usr/share/umami/flavors/$flavor/"
   done

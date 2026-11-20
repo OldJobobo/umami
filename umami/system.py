@@ -5,12 +5,18 @@ only root-owned inputs: the recipe in /etc/umami and the stock
 package in /usr/share/omarchy.
 """
 
+import contextlib
+import ctypes
+import fcntl
+import functools
 import json
 import os
 import pwd
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from . import ui
@@ -35,6 +41,11 @@ NO_SLEEP = {
     Path("/etc/systemd/sleep.conf.d/omarchy-sleep-disabled.conf"):
         "[Sleep]\nAllowSuspend=no\nAllowHibernation=no\nAllowSuspendThenHibernate=no\nAllowHybridSleep=no\n",
 }
+# A drop-in for systemd's default .link file, so every interface keeps its
+# name and only gains Wake-on-LAN (one that can't wake is skipped).
+WAKE_ON_LAN = Path("/etc/systemd/network/99-default.link.d/90-umami-wake-on-lan.conf")
+# Adds new users to the flavor's groups as they are created.
+USERS_PATH_UNIT = "umami-users.path"
 # sshd takes the first value it reads, so this sorts before the others.
 SSHD_KEYS_ONLY = Path("/etc/ssh/sshd_config.d/05-umami-keys-only.conf")
 OMARCHY_CONF = Path("/etc/omarchy.conf")
@@ -48,6 +59,96 @@ SELF = "/usr/lib/umami/bin/umami"
 def require_root():
   if os.geteuid() != 0:
     raise UmamiError("this needs root. Run it with sudo.")
+
+
+_held = 0
+
+
+@contextlib.contextmanager
+def state_lock():
+  """One umami at a time changes the machine: the pacman hook and a manual
+  switch would otherwise build and swap the tree over each other. Held
+  again by the same process (flavor composes), it is already held."""
+  global _held
+  if _held:
+    _held += 1
+    try:
+      yield
+    finally:
+      _held -= 1
+    return
+  STATE.mkdir(parents=True, exist_ok=True)
+  with open(STATE / ".lock", "w") as handle:
+    try:
+      fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+      ui.say("Waiting for another umami command to finish")
+      fcntl.flock(handle, fcntl.LOCK_EX)
+    _held = 1
+    try:
+      yield
+    finally:
+      _held = 0
+
+
+def locked(command):
+  @functools.wraps(command)
+  def run(*args, **kwargs):
+    require_root()
+    with state_lock():
+      return command(*args, **kwargs)
+  return run
+
+
+def snapshot(why: str):
+  """A snapper snapshot before a flavor changes packages and services, the
+  one omarchy update takes, so going back is a pick in the boot menu. A
+  machine without snapper, or with it unconfigured, goes on without."""
+  try:
+    result = subprocess.run(["omarchy-snapshot", "create"], capture_output=True, text=True)
+  except OSError:
+    return
+  if result.returncode == 0:
+    ui.say(f"Took a snapshot before {why}: the boot menu can go back to it")
+  elif result.returncode != 127:  # 127: no snapper
+    why_not = re.sub(r"\x1b\[[0-9;]*m", "", (result.stderr or result.stdout)).strip().splitlines()
+    ui.say(f"No snapshot before {why}" + (f": {why_not[0][:200]}" if why_not else ""))
+
+
+def exchange(a: Path, b: Path) -> bool:
+  """Swap two directories in one step (renameat2 RENAME_EXCHANGE), so the
+  tree is never missing, even for a moment or after a crash."""
+  try:
+    libc = ctypes.CDLL(None, use_errno=True)
+    return libc.renameat2(-100, os.fsencode(a), -100, os.fsencode(b), 2) == 0
+  except (OSError, AttributeError):
+    return False
+
+
+def publish(new: Path):
+  """Put a composed tree in place of the live one."""
+  if TREE.exists() and exchange(new, TREE):
+    shutil.rmtree(new)  # the previous tree, now
+    return
+  old = STATE / "tree.old"
+  if TREE.exists():
+    TREE.rename(old)
+  new.rename(TREE)
+  if old.exists():
+    shutil.rmtree(old)
+
+
+def failed_report(error: Exception) -> dict:
+  """A composition that stopped on an error is a failed one, so it gets the
+  same fallback to stock as a required change that can't apply."""
+  name = ""
+  try:
+    name = load(RECIPE).name
+  except (UmamiError, OSError):
+    pass
+  return {"flavor": name or "?", "status": "failed", "error": f"{type(error).__name__}: {error}"[:500],
+          "blocking": [], "transforms": [], "code": [], "builtin": [], "source": str(STOCK),
+          "composed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
 
 
 def git_mark(tree: Path):
@@ -131,6 +232,9 @@ def update_notice(report: dict) -> tuple:
   name, version = report["flavor"], report.get("package") or "the new Omarchy"
   count = len(report["transforms"])
   off = [t for t in report["transforms"] if t["status"] != "applied"]
+  if report.get("error"):
+    return (f"Flavor {name} could not be reapplied", f"Composing it onto {version} stopped: {report['error']}. "
+            "Omarchy runs stock after the next reboot. See: umami status", "critical")
   if report["status"] == "failed":
     blocking = [t["id"] for t in off if t.get("required", True) and t["status"] in ("stale", "failed")]
     return (f"Flavor {name} could not be reapplied",
@@ -164,11 +268,11 @@ def notify_sessions(title: str, body: str, urgency: str = "normal"):
       pass
 
 
+@locked
 def recompose(hook: bool = False) -> int:
   """hook=True (from the pacman hook): report a failed composition loudly
   but exit 0, since pacman prints any nonzero hook as an error, and the
   package transaction itself did succeed."""
-  require_root()
   if not RECIPE.is_file():
     if hook:
       clean_removed_tree()
@@ -177,11 +281,16 @@ def recompose(hook: bool = False) -> int:
   STATE.mkdir(parents=True, exist_ok=True)
   new = STATE / "tree.new"
   old = STATE / "tree.old"
+  if old.exists() and not TREE.exists():
+    old.rename(TREE)  # a swap that stopped halfway: the last tree comes back
   for leftover in (new, old):
     if leftover.exists():
       shutil.rmtree(leftover)
 
-  report = Composer(load(RECIPE), STOCK, new).run()
+  try:
+    report = Composer(load(RECIPE), STOCK, new).run()
+  except Exception as error:  # whatever stopped it, the fallback below must run
+    report = failed_report(error)
   report["package"] = package_version()
   REPORT.write_text(json.dumps(report, indent=2) + "\n")
   print(summary(report))
@@ -191,23 +300,20 @@ def recompose(hook: bool = False) -> int:
   if report["status"] == "failed":
     # The running session keeps the tree it has; from the next boot
     # Omarchy runs stock until the recipe is fixed.
-    shutil.rmtree(new)
-    point_at(STOCK)
+    shutil.rmtree(new, ignore_errors=True)
+    if configured_path() == str(TREE):  # never someone's dev link
+      point_at(STOCK)
     print("umami: this session keeps running as it is; after the next reboot Omarchy runs stock.")
     print("umami: fix the recipe (umami status shows why), then: sudo umami flavor <name>")
     return 0 if hook else 2
 
   git_mark(new)
-  if TREE.exists():
-    TREE.rename(old)
-  new.rename(TREE)
-  if old.exists():
-    shutil.rmtree(old)
+  publish(new)
   return 0
 
 
+@locked
 def enable(quiet: bool = False) -> int:
-  require_root()
   if not TREE.is_dir():
     raise UmamiError("there is no composed flavor yet. Pick one with: sudo umami flavor <name>")
   git_safe_directory()
@@ -243,11 +349,11 @@ def find_flavor(flavor: str, dirs: list[Path]) -> Path:
   raise UmamiError(f"no flavor {flavor!r}" + (f". Try: {', '.join(names)}" if names else ""))
 
 
+@locked
 def flavor(flavor: str, assume_yes: bool = False) -> int:
   """Install a flavor: a name (your own in ~/.config/umami/flavors, then
   the package's), or a recipe directory. Copies it to /etc/umami,
   composes, and enables it."""
-  require_root()
   source = find_flavor(flavor, [d for d in (own_flavors(), EXAMPLES) if d])
   recipe = load(source / "recipe.toml")  # refuses a broken recipe before anything changes
 
@@ -257,6 +363,7 @@ def flavor(flavor: str, assume_yes: bool = False) -> int:
 
   ui.say(f"Flavor {recipe.name}, " + ("runs code, trusted like a package" if recipe.code
                                       else "declarative: nothing in it runs as written"))
+  snapshot(f"flavor {recipe.name}")
   install_packages(recipe.packages, recipe.name)  # before anything changes: a failure leaves the current flavor
   check_units(recipe.system)
   staged = RECIPE.parent.with_name(RECIPE.parent.name + ".new")
@@ -266,7 +373,8 @@ def flavor(flavor: str, assume_yes: bool = False) -> int:
   REMOVED.unlink(missing_ok=True)
   for path in [staged, *staged.rglob("*")]:
     os.chown(path, 0, 0)
-    path.chmod(path.stat().st_mode & ~0o022)
+    # Root's now, and readable: each user's sync reads it at login.
+    path.chmod(path.stat().st_mode & ~0o022 | (0o555 if path.is_dir() else 0o444))
   if RECIPE.parent.exists():
     shutil.rmtree(RECIPE.parent)
   staged.rename(RECIPE.parent)
@@ -302,11 +410,31 @@ def package_repo(name: str) -> str:
 def installed_packages() -> dict:
   """The packages flavors installed, {name: flavor}. A package the machine
   had already is never recorded, so removing a flavor leaves it."""
+  return {name: entry["flavor"] if isinstance(entry, dict) else entry for name, entry in package_record().items()}
+
+
+def package_record() -> dict:
+  """{name: {"flavor", "installed"}}: installed is pacman's install date,
+  so a package removed and installed again by someone else isn't the
+  flavor's any more. Older records have only the flavor."""
   try:
     record = json.loads(PACKAGES.read_text())
   except (OSError, ValueError):
     return {}
   return record if isinstance(record, dict) else {}
+
+
+def install_date(name: str) -> str:
+  out = subprocess.run(["pacman", "-Qi", "--", name], capture_output=True, text=True,
+                       env={**os.environ, "LC_ALL": "C"}).stdout
+  return next((line.split(":", 1)[1].strip() for line in out.splitlines() if line.startswith("Install Date")), "")
+
+
+def installed_since(name: str, start: float) -> bool:
+  try:
+    return time.mktime(time.strptime(install_date(name), "%a %b %d %H:%M:%S %Y")) >= int(start)
+  except ValueError:
+    return False
 
 
 def save_packages(record: dict):
@@ -331,9 +459,13 @@ def install_packages(packages: list, flavor: str = ""):
       raise UmamiError(f"package {name} is in none of this machine's pacman repositories, "
                        "and a flavor installs only from those, never the AUR.")
     ui.say(f"Installing package {name} from the {repo} repository")
+  start = time.time()
   if subprocess.run(["omarchy-pkg-add", *missing]).returncode != 0:
     raise UmamiError(f"installing {', '.join(missing)} failed. The current flavor is unchanged.")
-  save_packages({**installed_packages(), **{name: flavor for name in missing}})
+  # Only what this install put there: one someone installed meanwhile isn't
+  # the flavor's to remove.
+  ours = {name: {"flavor": flavor, "installed": install_date(name)} for name in missing if installed_since(name, start)}
+  save_packages({**package_record(), **ours})
 
 
 # ---- stock apps a flavor leaves out
@@ -454,6 +586,83 @@ def check_units(system: dict):
     for unit in units:
       if systemctl("cat", "--", unit).returncode != 0:
         raise UmamiError(f"[system] names {unit}, which isn't installed (add its [[package]]).")
+  if system.get("firewall") and not shutil.which("ufw"):
+    raise UmamiError("[system] firewall opens ports with ufw, which this machine doesn't have.")
+  if system.get("wake_on_lan") and not shutil.which("ethtool"):
+    raise UmamiError("[system] wake_on_lan needs ethtool (add its [[package]]).")
+
+
+def ufw_has(rule: str) -> bool:
+  status = subprocess.run(["ufw", "status"], capture_output=True, text=True).stdout
+  return any(line.split()[:1] == [rule] for line in status.splitlines())
+
+
+def wired_interfaces() -> list:
+  """Physical Ethernet: a device behind it, ARP type 1, and not wireless."""
+  net = Path("/sys/class/net")
+  return sorted(d.name for d in net.iterdir() if (d / "device").exists() and not (d / "wireless").exists()
+                and (d / "type").read_text().strip() == "1") if net.is_dir() else []
+
+
+def wake_setting(interface: str) -> tuple:
+  """(what the card supports, what it is set to), from ethtool."""
+  out = subprocess.run(["ethtool", interface], capture_output=True, text=True).stdout
+  value = lambda key: next((l.split(":", 1)[1].strip() for l in out.splitlines() if l.strip().startswith(key)), "")
+  return value("Supports Wake-on"), value("Wake-on")
+
+
+def wake_on_lan(record: dict) -> list:
+  """Wake on a magic packet: from the next boot through systemd's link
+  settings, and now through ethtool."""
+  WAKE_ON_LAN.parent.mkdir(parents=True, exist_ok=True)
+  WAKE_ON_LAN.write_text("# Written by umami: the flavor wakes on LAN. umami remove deletes it.\n[Link]\nWakeOnLan=magic\n")
+  was, lines = {}, []
+  for interface in wired_interfaces():
+    supports, current = wake_setting(interface)
+    if "g" not in supports:
+      continue
+    if current != "g" and subprocess.run(["ethtool", "-s", interface, "wol", "g"], capture_output=True).returncode == 0:
+      was[interface] = current or "d"
+    lines.append(f"  wake      on LAN through {interface}")
+  record["wake_on_lan"] = was
+  if not lines:
+    lines.append("  note      no wired interface here can wake on LAN; it applies to one plugged in later")
+  return lines
+
+
+def add_to_groups(system: dict, record: dict) -> list:
+  """Each person on the machine joins the flavor's groups, recorded so
+  umami remove takes them out again. Someone already in a group isn't
+  recorded, and neither is anyone taken out by hand, so they stay out."""
+  lines = []
+  record.setdefault("groups", [])
+  have = {tuple(pair) for pair in record["groups"]}
+  for group in system.get("groups", []):
+    members = subprocess.run(["getent", "group", group], capture_output=True, text=True).stdout.strip().split(":")[-1]
+    for user in regular_users():
+      if (user, group) in have or user in members.split(","):
+        continue
+      if subprocess.run(["gpasswd", "-a", user, group], capture_output=True).returncode == 0:
+        record["groups"].append([user, group])
+        save_system(record)
+        lines.append(f"  added     {user} to {group} (from their next login)")
+  return lines
+
+
+@locked
+def system_sync() -> int:
+  """Run by umami-users.path when /etc/passwd changes: someone created
+  after the flavor was installed joins its groups too."""
+  if not RECIPE.is_file():
+    return 0
+  system = load(RECIPE).system
+  record = load_system()
+  for line in add_to_groups(system, record):
+    print(line.strip())
+  if not record["groups"]:
+    record.pop("groups")
+  save_system(record)
+  return 0
 
 
 def keys_only(record: dict) -> list:
@@ -532,10 +741,25 @@ def apply_system(system: dict) -> list:
       subprocess.run(["gpasswd", "-d", user, group], capture_output=True)
       lines.append(f"  removed   {user} from {group}")
   record["groups"] = kept
+  if record.get("users_path") and not system.get("groups"):
+    systemctl("disable", "--now", USERS_PATH_UNIT)
+    record.pop("users_path")
   if record.get("timezone") and not system.get("timezone"):
     was = record.pop("timezone")
     subprocess.run(["timedatectl", "set-timezone", was], capture_output=True)
     lines.append(f"  restored  timezone {was}")
+  wanted_ports = set((system.get("firewall") or {}).get("allow", []))
+  for rule in [r for r in record.get("firewall", []) if r not in wanted_ports]:
+    subprocess.run(["ufw", "delete", "allow", rule], capture_output=True)
+    record["firewall"].remove(rule)
+    lines.append(f"  closed    port {rule}")
+  if "firewall" in record and not record["firewall"]:
+    record.pop("firewall")
+  if "wake_on_lan" in record and not system.get("wake_on_lan"):
+    for interface, was in record.pop("wake_on_lan").items():
+      subprocess.run(["ethtool", "-s", interface, "wol", was], capture_output=True)
+    WAKE_ON_LAN.unlink(missing_ok=True)
+    lines.append("  restored  wake-on-LAN as it was")
   save_system(record)
 
   for unit, action in wanted.items():
@@ -567,16 +791,11 @@ def apply_system(system: dict) -> list:
     record["no_sleep"] = created
     save_system(record)
     lines.append("  sleep     off: no suspend on idle, lid or key, and none in the menu (the lid from the next boot)")
-  have = {tuple(pair) for pair in record["groups"]}
-  for group in system.get("groups", []):
-    members = subprocess.run(["getent", "group", group], capture_output=True, text=True).stdout.strip().split(":")[-1]
-    for user in regular_users():
-      if (user, group) in have or user in members.split(","):
-        continue
-      if subprocess.run(["gpasswd", "-a", user, group], capture_output=True).returncode == 0:
-        record["groups"].append([user, group])
-        save_system(record)
-        lines.append(f"  added     {user} to {group} (from their next login)")
+  lines += add_to_groups(system, record)
+  if system.get("groups") and not record.get("users_path") and systemctl("cat", "--", USERS_PATH_UNIT).returncode == 0:
+    systemctl("enable", "--now", USERS_PATH_UNIT)  # and anyone created later
+    record["users_path"] = True
+    save_system(record)
   if system.get("timezone") and not record.get("timezone"):
     was = subprocess.run(["timedatectl", "show", "-p", "Timezone", "--value"], capture_output=True, text=True).stdout.strip()
     if was != system["timezone"]:
@@ -584,6 +803,24 @@ def apply_system(system: dict) -> list:
       subprocess.run(["timedatectl", "set-timezone", system["timezone"]], capture_output=True)
       save_system(record)
       lines.append(f"  timezone  {system['timezone']}")
+  added = record.setdefault("firewall", [])
+  opened = False
+  for rule in (system.get("firewall") or {}).get("allow", []):
+    if rule in added or ufw_has(rule):  # a rule that was there already isn't the flavor's
+      continue
+    if subprocess.run(["ufw", "allow", rule, "comment", "umami"], capture_output=True).returncode != 0:
+      raise UmamiError(f"ufw allow {rule} failed.")
+    added.append(rule)
+    opened = True
+    save_system(record)
+    lines.append(f"  opened    port {rule} in the firewall")
+  if opened or any(l.startswith("  closed") for l in lines):
+    subprocess.run(["ufw", "reload"], capture_output=True)
+  if not added:
+    record.pop("firewall")
+  if system.get("wake_on_lan") and "wake_on_lan" not in record:
+    lines += wake_on_lan(record)
+    save_system(record)
   if not record["groups"]:
     record.pop("groups")
   if not services:
@@ -744,9 +981,15 @@ def removal_set(names: list) -> list:
 def drop_packages(assume_yes: bool):
   """Remove the packages flavors installed, except ones something else on
   the machine still needs or a user's suite still runs from."""
-  record = installed_packages()
-  installed = {name for name in record
-               if subprocess.run(["pacman", "-Q", "--", name], capture_output=True).returncode == 0}
+  record = package_record()
+  installed = set()
+  for name, entry in record.items():
+    if subprocess.run(["pacman", "-Q", "--", name], capture_output=True).returncode != 0:
+      continue
+    if isinstance(entry, dict) and entry.get("installed") and install_date(name) != entry["installed"]:
+      ui.say(f"Keeping package {name}: it was removed and installed again since the flavor installed it.")
+      continue
+    installed.add(name)
   present = set(installed)
   suites = suite_users()
   for name in sorted(present & set(suites)):
@@ -772,17 +1015,17 @@ def drop_packages(assume_yes: bool):
       return
     if subprocess.run(["omarchy-pkg-drop", *sorted(drop)]).returncode != 0:
       raise UmamiError(f"removing {', '.join(sorted(drop))} failed.")
-  save_packages({name: flavor for name, flavor in record.items() if name in installed - drop})
+  save_packages({name: entry for name, entry in record.items() if name in installed - drop})
 
 
+@locked
 def remove(assume_yes: bool = False) -> int:
   """Take the flavor off the machine: Omarchy back to stock, the packages it
   installed, and in the sudo user's session, its plugins (asked) and the
   theme and bar it set (put back). The flavor stays available to install
   again."""
-  require_root()
   cleaned = clean_removed_tree()
-  name = load(RECIPE).name if RECIPE.is_file() else ""
+  name = installed_name()
   if not (name or installed_packages() or SYSTEM.is_file() or DROPPED.is_file()
           or (TREE.exists() and not REMOVED.is_file())):
     if cleaned:
@@ -791,6 +1034,7 @@ def remove(assume_yes: bool = False) -> int:
     raise UmamiError("no flavor is installed.")
   if name:
     ui.say(f"Removing flavor {name}.")
+  snapshot("removing the flavor")
 
   # Your half first, here, while the flavor's packages (a suite's own
   # uninstaller among them) are still installed.
@@ -799,9 +1043,8 @@ def remove(assume_yes: bool = False) -> int:
     user, uid, _ = session
     flags = ["--yes"] if assume_yes else []
     subprocess.run(["runuser", "-u", user, "--", "env", *[f"{k}={v}" for k, v in session_env(user, uid).items()],
-                    SELF, "user-sync", "--remove", *flags])
-  else:
-    ui.say("For each user, while logged in: umami user-sync --remove puts back the theme and bar and asks about the plugins.")
+                    SELF, "user-sync", "--remove", "--all", *flags])
+  ui.say(("Everyone else" if session else "Each user") + " gets their theme, bar and settings back at their next login.")
   for line in apply_system({}):  # before the packages its services come from
     print(line)
   if reinstall(sorted(dropped_packages())):
@@ -828,6 +1071,19 @@ def remove(assume_yes: bool = False) -> int:
     REMOVED.unlink(missing_ok=True)
     ui.say("Omarchy runs stock from the next boot." if name and not linked else "Done.")
   return 0
+
+
+def installed_name() -> str:
+  """The installed flavor's name, from its recipe or else its last report:
+  a recipe that no longer loads mustn't stop umami remove."""
+  try:
+    return load(RECIPE).name if RECIPE.is_file() else ""
+  except UmamiError:
+    pass
+  try:
+    return json.loads(REPORT.read_text()).get("flavor") or "the flavor"
+  except (OSError, ValueError):
+    return "the flavor"
 
 
 def omarchy_path_label(path: str) -> str:

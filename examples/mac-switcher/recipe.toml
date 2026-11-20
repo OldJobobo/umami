@@ -3,7 +3,8 @@
 # A dock along the bottom, Spotlight on Super+Space, Alt+Tab through your
 # windows, a menu bar with the clock on the right, rounded windows with a
 # soft shadow, a light theme, and natural scrolling with two-finger right
-# click on the touchpad. The pieces come from the Omarchy plugin
+# click on the touchpad, and Files and video windows that float like Finder
+# and QuickTime windows. The pieces come from the Omarchy plugin
 # marketplace (plugins.omarchy.org).
 #
 #   Super + Space            Spotlight: apps, files, calculator, web
@@ -114,6 +115,20 @@ value = true
 # apps, so it replaces the Apps grid's key too, and the Omarchy menu moves
 # there. (Alt+Space, Spotlight's own default, is dictation in stock Omarchy
 # whenever a dictation backend is installed.)
+# Files and mpv open floating and centered, as a Finder window or a QuickTime
+# player does, instead of taking a tile.
+[[transform]]
+id = "files-float"
+type = "window.rule"
+match = { class = "^folio$" }
+rules = { float = true, center = true, size = [1100, 700] }
+
+[[transform]]
+id = "video-floats"
+type = "window.rule"
+match = { class = "^mpv$" }
+rules = { float = true, center = true }
+
 [[transform]]
 id = "spotlight-key"
 type = "bind.replace"

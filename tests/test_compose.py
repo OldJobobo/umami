@@ -397,6 +397,30 @@ class RecipeTest(Fixture):
     self.assertFalse(escaped.exists())
 
 
+class WindowRuleTest(Fixture):
+  def test_a_window_rule_is_declarative_omarchy_lua(self):
+    report, t = self.compose("""
+        [[transform]]
+        id = "float-calculator"
+        type = "window.rule"
+        match = { class = "omacalc" }
+        rules = { float = true, size = [400, 600], workspace = "special silent" }
+    """, code=False)
+    self.assertEqual(t["float-calculator"]["status"], "applied")
+    lua = (self.dest / "default/hypr/flavor.lua").read_text()
+    self.assertIn('o.window({ class = "omacalc" }, { float = true, size = { 400, 600 }, workspace = "special silent" })', lua)
+
+  def test_a_rule_outside_the_list_is_refused(self):
+    with self.assertRaisesRegex(RecipeError, "rules is a table"):
+      self.recipe('[[transform]]\nid = "w"\ntype = "window.rule"\nmatch = { class = "x" }\nrules = { exec = "id" }\n',
+                  code=False)
+
+  def test_taking_a_service_off_the_bar_needs_code(self):
+    write(self.source / "shell/plugins/services/idle/manifest.json", json.dumps({"id": "omarchy.idle", "kinds": ["service"]}))
+    with self.assertRaisesRegex(RecipeError, "omarchy.idle, a service"):
+      self.compose('[defaults.bar]\nremove = ["omarchy.idle"]\n', code=False)
+
+
 class RemovedTreeTest(unittest.TestCase):
   def setUp(self):
     self.tmp = tempfile.TemporaryDirectory()
@@ -465,6 +489,16 @@ class SystemTest(unittest.TestCase):
     (bin_dir / "gpasswd").chmod(0o755)
     (bin_dir / "getent").write_text('#!/bin/bash\nvar="MEMBERS_$2"; echo "$2:x:999:${!var}"\n')
     (bin_dir / "getent").chmod(0o755)
+    # ufw keeps its rules in $LOG.ufw; ethtool says the card supports g and is off.
+    (bin_dir / "ufw").write_text('#!/bin/bash\necho "ufw $*" >> "$LOG"\n'
+                                 'case $1 in\n'
+                                 '  status) cat "$LOG.ufw" 2>/dev/null ;;\n'
+                                 '  allow) echo "$2 ALLOW Anywhere" >> "$LOG.ufw" ;;\n'
+                                 'esac\n')
+    (bin_dir / "ufw").chmod(0o755)
+    (bin_dir / "ethtool").write_text('#!/bin/bash\necho "ethtool $*" >> "$LOG"\n'
+                                     '[[ $1 == -s ]] || printf "\\tSupports Wake-on: pumbg\\n\\tWake-on: d\\n"\n')
+    (bin_dir / "ethtool").chmod(0o755)
     (bin_dir / "ssh-keygen").write_text("#!/bin/bash\n")
     (bin_dir / "ssh-keygen").chmod(0o755)
     self.saved = dict(os.environ)
@@ -473,9 +507,10 @@ class SystemTest(unittest.TestCase):
     self.system = system
     self.keys_only = root / "05-umami-keys-only.conf"
     self.no_sleep = {root / "logind.conf": "[Login]\n", root / "sleep.conf": "[Sleep]\n"}
+    self.wake = root / "99-default.link.d/90-umami-wake-on-lan.conf"
     self.patches = [mock.patch.object(system, name, value) for name, value in
                     (("STATE", root), ("SYSTEM", root / "system.json"), ("SSHD_KEYS_ONLY", self.keys_only),
-                     ("NO_SLEEP", self.no_sleep))]
+                     ("NO_SLEEP", self.no_sleep), ("WAKE_ON_LAN", self.wake), ("wired_interfaces", lambda: ["enp1s0"]))]
     self.patches.append(mock.patch("shutil.which", lambda name, *a, **k: None))
     for patch in self.patches:
       patch.start()
@@ -533,6 +568,31 @@ class SystemTest(unittest.TestCase):
     calls = [l for l in self.log.read_text().splitlines() if l.startswith("gpasswd")]
     # bob was in docker already, so he stays.
     self.assertEqual(calls, ["gpasswd -a alice docker", "gpasswd -d alice docker"])
+
+  def test_only_the_ports_the_flavor_opened_are_closed(self):
+    Path(f"{self.log}.ufw").write_text("443/tcp ALLOW Anywhere\n")  # opened by hand before the flavor
+    self.system.apply_system({"firewall": {"allow": ["80/tcp", "443/tcp"]}})
+    self.system.apply_system({})
+    calls = [l for l in self.log.read_text().splitlines() if l.startswith(("ufw allow", "ufw delete"))]
+    self.assertEqual(calls, ["ufw allow 80/tcp comment umami", "ufw delete allow 80/tcp"])
+
+  def test_wake_on_lan_is_put_back_as_it_was(self):
+    self.system.apply_system({"wake_on_lan": True})
+    self.assertIn("WakeOnLan=magic", self.wake.read_text())
+    self.system.apply_system({})
+    self.assertFalse(self.wake.exists())
+    calls = [l for l in self.log.read_text().splitlines() if l.startswith("ethtool -s")]
+    self.assertEqual(calls, ["ethtool -s enp1s0 wol g", "ethtool -s enp1s0 wol d"])
+
+  def test_someone_created_later_joins_but_someone_taken_out_stays_out(self):
+    users = ["alice", "bob"]
+    with mock.patch.object(self.system, "regular_users", lambda: users):
+      self.system.apply_system({"groups": ["docker"]})
+      users.append("carol")  # a new account; bob was taken out of docker by hand
+      record = self.system.load_system()
+      self.system.add_to_groups({"groups": ["docker"]}, record)
+    calls = [l for l in self.log.read_text().splitlines() if l.startswith("gpasswd")]
+    self.assertEqual(calls, ["gpasswd -a alice docker", "gpasswd -a bob docker", "gpasswd -a carol docker"])
 
   def test_sshd_stays_off_if_it_would_still_take_passwords(self):
     os.environ["SSHD_PASSWORDS"] = "yes"
@@ -932,7 +992,9 @@ class InstallPackagesTest(unittest.TestCase):
         'case $1 in\n'
         '  -Q|-Qq) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
         '  -Qqe) [[ " $EXPLICIT " == *" $3 "* ]] ;;\n'
-        '  -Qi) var="NEEDS_${3//-/_}"; printf "Name            : %s\\nRequired By     : %s\\n" "$3" "${!var:-None}" ;;\n'
+        '  -Qi) var="NEEDS_${3//-/_}"; d="DATE_${3//-/_}"\n'
+        '       printf "Name            : %s\\nRequired By     : %s\\nInstall Date    : %s\\n" "$3" "${!var:-None}" '
+        '"${!d:-$(LC_ALL=C date \'+%a %b %d %H:%M:%S %Y\')}" ;;\n'
         '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
         '  -Rsp) shift 4; printf "%s\\n" "$@" $ORPHANS ;;\n'
         'esac\n')
@@ -1013,6 +1075,19 @@ class InstallPackagesTest(unittest.TestCase):
     self.assertEqual(self.installs(), ["add office"])
     self.assertEqual(system.dropped_packages(), {"game": "server"})
 
+  def test_a_package_someone_else_installed_meanwhile_is_not_the_flavors(self):
+    from umami.system import install_packages, installed_packages
+    os.environ["DATE_repo_pkg"] = "Mon Jan 05 10:00:00 2026"  # pacman says it was there before this install
+    install_packages([{"name": "repo-pkg"}], "server")
+    self.assertEqual(installed_packages(), {})
+
+  def test_a_package_reinstalled_since_is_kept(self):
+    from umami.system import drop_packages, save_packages
+    save_packages({"tool": {"flavor": "server", "installed": "Mon Jan 05 10:00:00 2026"}})
+    os.environ.update({"INSTALLED": "tool", "DATE_tool": "Tue Feb 10 09:00:00 2026"})
+    drop_packages(assume_yes=True)
+    self.assertFalse(any(l.startswith("drop ") for l in self.log.read_text().splitlines()))
+
   def test_a_package_in_no_repository_installs_nothing(self):
     from umami.system import install_packages
     with self.assertRaises(UmamiError):
@@ -1024,6 +1099,11 @@ class SystemRecipeTest(PackageAndSuiteRecipeTest):
   def test_a_service_is_on_or_off_not_both(self):
     with self.assertRaisesRegex(RecipeError, "both enabled and disabled"):
       self.load('[system.services]\nenable = ["sshd"]\ndisable = ["sshd.service"]\n')
+
+  def test_a_port_is_a_number_and_a_protocol(self):
+    for rule in ("80", "80/tcp; reboot", "70000/tcp", "any"):
+      with self.assertRaisesRegex(RecipeError, "firewall"):
+        self.load(f'[system]\nfirewall = {{ allow = ["{rule}"] }}\n')
 
   def test_a_unit_is_a_name_not_a_command(self):
     with self.assertRaisesRegex(RecipeError, "unit names"):

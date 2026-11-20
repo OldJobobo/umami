@@ -1,0 +1,10 @@
+# Started by umami flavor when the flavor has [system] groups: anyone
+# created afterwards joins them too. umami remove stops it.
+[Unit]
+Description=Add new users to the umami flavor's groups
+
+[Path]
+PathChanged=/etc/passwd
+
+[Install]
+WantedBy=multi-user.target

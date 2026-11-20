@@ -15,6 +15,8 @@
 #   - runs sshd (keys only, port 22 open in the firewall, rate limited),
 #     Tailscale and Docker, with its users able to run docker without sudo
 #   - turns off Bluetooth and printing
+#   - wakes on LAN, through any wired card that can, so a magic packet
+#     from another machine starts it
 #
 # Authorize a key before you rely on SSH: password logins are off.
 #
@@ -48,6 +50,9 @@ boot = "console"
 sleep = false
 groups = ["docker"]                    # docker and lazydocker without sudo
 channel = "stable"                     # checked, not switched
+wake_on_lan = true
+# For a web server, open its ports too (closed again by umami remove):
+# firewall = { allow = ["80/tcp", "443/tcp"] }
 
 [system.services]
 enable = ["sshd", "tailscaled", "docker"]

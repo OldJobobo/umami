@@ -81,6 +81,10 @@ def describe(t) -> str:
     return "remove " + ", ".join(o.get("ids") or [])
   if t.type == "plugin.hypr":
     return f"{o.get('plugin')}'s {o.get('file')}"
+  if t.type == "window.rule":
+    match = " ".join(f"{k} {v}" for k, v in (o.get("match") or {}).items())
+    rules = ", ".join(k if v is True else f"{k} {lua.literal(v)}" for k, v in (o.get("rules") or {}).items())
+    return short(f"{match}: {rules}", 60)
   if t.type == "lua":
     return short(str(o.get("source") or "inline Lua"))
   return short(str(o.get("source") or o.get("plugin") or ""))
@@ -301,6 +305,13 @@ class Composer:
       # Bound only on some Omarchy versions; hl.unbind of a free key does nothing.
       r.warnings.append(f"{keys} is not bound in this Omarchy; unbinding it anyway")
     self.add_lua(t, f"bind.remove {keys}", f"hl.unbind({lua.literal(keys)})", r)
+
+  def t_window_rule(self, t, r):
+    """A window rule through Omarchy's own o.window, as its app rules are
+    written: the last matching rule wins, so locked ones win over the
+    user's."""
+    chunk = f"o.window({lua.literal(t.get('match'))}, {lua.literal(t.get('rules'))})"
+    self.add_lua(t, f"window.rule {describe(t)}", chunk, r)
 
   def add_lua(self, t, label, chunk, r):
     label = " ".join(label.split())  # a comment line stays one line
@@ -602,6 +613,23 @@ class Composer:
        "  fail \"plugin '$id' is not known; run: omarchy-shell shell rescanPlugins\""),
   ]
 
+  def check_bar_removals(self):
+    """[defaults.bar] and [locked.bar] remove go through omarchy-plugin-disable,
+    which turns off any plugin. Declaratively that is only what is on screen,
+    as for shell.plugins.remove: a service, such as idle or the lock screen,
+    needs code = true."""
+    if self.recipe.code:
+      return
+    manifests = self.plugin_manifests()
+    for table, name in ((self.recipe.defaults, "defaults"), (self.recipe.locked, "locked")):
+      for wid in (table.get("bar") or {}).get("remove", []):
+        if wid not in manifests:
+          continue
+        kinds = set(json.loads(manifests[wid].read_text()).get("kinds") or [])
+        if kinds - tiers.REMOVABLE_KINDS:
+          raise RecipeError(f"[{name}.bar] remove names {wid}, a {', '.join(sorted(kinds - tiers.REMOVABLE_KINDS))}: "
+                            "turning it off stops part of Omarchy, so it needs code = true in [flavor]")
+
   def builtin_patches(self) -> list:
     """An Omarchy that reads OMARCHY_PATH_TYPE (omacom/omarchy#19538) already
     treats the tree as a package install, so its scripts need no patch."""
@@ -634,6 +662,7 @@ class Composer:
       except (RecipeError, OSError, ValueError) as error:
         r.status, r.detail = "failed", str(error)
       self.results.append(r)
+    self.check_bar_removals()
     self.write_lua()
     builtin = self.builtin_patches()
 
@@ -669,6 +698,7 @@ class Composer:
     report_dir.mkdir(exist_ok=True)
     (report_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     shutil.copy2(self.recipe.path, report_dir / "recipe.toml")
+    (report_dir / "recipe.toml").chmod(0o644)  # each user's sync reads it
     # A background goes with the recipe copy, where each user's sync finds it.
     for table in (self.recipe.defaults, self.recipe.locked):
       if "background" in table:

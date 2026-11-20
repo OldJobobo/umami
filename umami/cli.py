@@ -180,8 +180,15 @@ def main(argv=None) -> int:
   user_sync.add_argument("--yes", action="store_true", help="say yes to those plugins without asking")
   user_sync.add_argument("--remove", action="store_true",
                          help="after umami remove: put back your theme and bar, and ask about the flavor's plugins")
-  user_sync.set_defaults(func=lambda args: user.remove(interactive=args.review, assume_yes=args.yes, dry_run=args.dry_run) if args.remove
+  # Plumbing: --all from umami remove itself, --login from the autostart.
+  user_sync.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
+  user_sync.add_argument("--login", action="store_true", help=argparse.SUPPRESS)
+  user_sync.set_defaults(func=lambda args: user.login() if args.login else
+                         user.remove(interactive=args.review, assume_yes=args.yes, dry_run=args.dry_run,
+                                     everything=args.all) if args.remove
                          else user.sync(args.recipe, dry_run=args.dry_run, interactive=args.review, assume_yes=args.yes))
+
+  sub.add_parser("system-sync", help=argparse.SUPPRESS).set_defaults(func=lambda args: system.system_sync())
 
   refresh = sub.add_parser("refresh", help="as your user, in your session: pick up a flavor switched live (umami flavor runs it)")
   refresh.set_defaults(func=lambda args: user.refresh())

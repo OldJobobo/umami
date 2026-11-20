@@ -19,6 +19,7 @@ REQUIRED_KEYS = {
     "bind.add": ["keys", "description"],
     "bind.replace": ["keys", "description"],
     "bind.remove": ["keys"],
+    "window.rule": ["match", "rules"],
     "command.wrap": ["command"],
     "command.replace": ["command", "source"],
     "shell.plugins.add": ["source"],
@@ -31,7 +32,8 @@ REQUIRED_KEYS = {
 # Transforms that may say `locked = true`: loaded after the user's own
 # Hyprland files, so the flavor's setting or key wins. shell.plugins.remove is
 # always locked: it takes the plugin out of the tree.
-LOCKABLE = {"lua.set", "lua", "bind.add", "bind.replace", "bind.remove", "plugin.hypr", "shell.plugins.remove"}
+LOCKABLE = {"lua.set", "lua", "bind.add", "bind.replace", "bind.remove", "plugin.hypr", "shell.plugins.remove",
+            "window.rule"}
 
 # Transforms that may say `over_theme = true`: loaded right after the theme's
 # Hyprland settings, so the flavor's look wins over the theme's while the
@@ -137,6 +139,11 @@ def load(path) -> Recipe:
     if ttype == "plugin.hypr" and not tiers.plugin_file_ok(raw.get("file")):
       raise RecipeError(f"{where} ({tid}): plugin.hypr file must be a relative .lua path inside the plugin, "
                         f"got {raw.get('file')!r}")
+    if ttype == "window.rule":
+      try:
+        tiers.check_window_rule(raw["match"], raw["rules"])
+      except ValueError as error:
+        raise RecipeError(f"{where} ({tid}): {error}") from error
     if ttype == "lua" and ("code" in raw) == ("source" in raw):
       raise RecipeError(f"{where} ({tid}): lua needs exactly one of code, source")
     if ttype == "diff":
@@ -223,6 +230,7 @@ def load(path) -> Recipe:
   return recipe
 
 
+PORT_RULE = re.compile(r"[1-9][0-9]{0,4}(:[1-9][0-9]{0,4})?/(tcp|udp)")
 UNIT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._-]*")
 UNIT_KINDS = (".service", ".socket", ".timer", ".path")
 
@@ -233,7 +241,7 @@ def check_system(table) -> dict:
   `umami remove` puts it back."""
   if not isinstance(table, dict):
     raise RecipeError("[system] must be a table")
-  unknown = set(table) - {"boot", "sleep", "services", "groups", "timezone", "channel"}
+  unknown = set(table) - {"boot", "sleep", "services", "groups", "timezone", "channel", "firewall", "wake_on_lan"}
   if unknown:
     raise RecipeError(f"[system]: unknown keys {', '.join(sorted(unknown))}")
   system = {}
@@ -261,6 +269,20 @@ def check_system(table) -> dict:
     if table["channel"] not in ("stable", "rc", "edge"):
       raise RecipeError('[system] channel is "stable", "rc" or "edge"')
     system["channel"] = table["channel"]
+  if "firewall" in table:
+    firewall = table["firewall"]
+    allow = firewall.get("allow", []) if isinstance(firewall, dict) else None
+    if not (isinstance(firewall, dict) and not set(firewall) - {"allow"} and isinstance(allow, list)
+            and all(isinstance(r, str) and PORT_RULE.fullmatch(r)
+                    and all(int(n) <= 65535 for n in r.split("/")[0].split(":")) for r in allow)):
+      raise RecipeError('[system] firewall has allow, a list of ports such as "443/tcp" or "60000:61000/udp"')
+    if allow:
+      system["firewall"] = {"allow": list(allow)}
+  if "wake_on_lan" in table:
+    if not isinstance(table["wake_on_lan"], bool):
+      raise RecipeError("[system] wake_on_lan is true or false")
+    if table["wake_on_lan"]:
+      system["wake_on_lan"] = True
   services = table.get("services", {})
   if not isinstance(services, dict) or set(services) - {"enable", "disable"}:
     raise RecipeError("[system] services has enable and disable lists")
@@ -318,9 +340,14 @@ def check_user_table(name: str, table) -> dict:
 
 def check_apps(apps):
   """[defaults.apps]: launchers. hide takes entries out of the app launcher;
-  webapps and tuis add them, with Omarchy's own installers."""
-  if not isinstance(apps, dict) or set(apps) - {"hide", "webapps", "tuis"}:
-    raise RecipeError("[defaults.apps] has hide, webapps and tuis")
+  webapps and tuis add them, with Omarchy's own installers; open says which
+  app opens a kind of file or link."""
+  if not isinstance(apps, dict) or set(apps) - {"hide", "webapps", "tuis", "open"}:
+    raise RecipeError("[defaults.apps] has hide, webapps, tuis and open")
+  opens = apps.get("open", {})
+  if not (isinstance(opens, dict) and all(MIME_TYPE.fullmatch(k) and isinstance(v, str) and DESKTOP_ID.fullmatch(v)
+                                          for k, v in opens.items())):
+    raise RecipeError('[defaults.apps.open] maps a type to an app, such as "application/pdf" = "org.gnome.Papers.desktop"')
   launcher = lambda v: plain_text(v) and "/" not in v
   hide = apps.get("hide", [])
   if not (isinstance(hide, list) and all(launcher(n) for n in hide)):
@@ -335,6 +362,8 @@ def check_apps(apps):
       raise RecipeError("[defaults.apps] tuis entries need name, command, style (float or tile) and icon")
 
 
+MIME_TYPE = re.compile(r"[a-z]+/[A-Za-z0-9][A-Za-z0-9.+_-]*")
+DESKTOP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.desktop")
 BAR_SECTIONS = {"left", "centerBegin", "center", "centerEnd", "tray", "right"}
 
 

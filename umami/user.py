@@ -21,6 +21,9 @@ installed themselves is left alone, and only a plugin installed here follows
 a new pin.
 """
 
+import contextlib
+import fcntl
+import functools
 import json
 import os
 import re
@@ -31,9 +34,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from .recipe import load
+from .recipe import UmamiError, load
 
-TREE_RECIPE = Path("/var/lib/umami/tree/.flavor/recipe.toml")
+TREE = Path("/var/lib/umami/tree")
+TREE_RECIPE = TREE / ".flavor/recipe.toml"
+# The installed flavor's recipe: gone once umami remove has run.
+INSTALLED_RECIPE = Path("/etc/umami/recipe.toml")
 SELF = "/usr/lib/umami/bin/umami"
 
 # Omarchy's own words from omarchy plugin add.
@@ -76,6 +82,33 @@ def save_state(state: dict):
 
 class PluginError(Exception):
   pass
+
+
+_held = 0
+
+
+def one_at_a_time(command):
+  """One user-sync at a time for this user: the review terminal and a
+  login's sync would otherwise each save the state over the other's."""
+  @functools.wraps(command)
+  def run_it(*args, **kwargs):
+    global _held
+    if _held:
+      return command(*args, **kwargs)
+    path = state_file().with_name(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+      try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+      except BlockingIOError:
+        print("Waiting for another umami user-sync to finish (a question open in another terminal?)", flush=True)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+      _held = 1
+      try:
+        return command(*args, **kwargs)
+      finally:
+        _held = 0
+  return run_it
 
 
 def run(command, **kwargs):
@@ -265,7 +298,8 @@ def hidden(text: str) -> str:
 
 
 def hide_launcher(name: str):
-  """Returns the record for a hidden launcher, or None when there is none."""
+  """What hiding a launcher writes: (path, what was there or None, the new
+  text), or None when there is no such launcher."""
   mine = applications_dir() / f"{name}.desktop"
   if mine.is_file():
     before = mine.read_text()
@@ -274,10 +308,7 @@ def hide_launcher(name: str):
     if not source:
       return None
     before = None
-    mine.parent.mkdir(parents=True, exist_ok=True)
-  wrote = hidden(before if before is not None else source.read_text())
-  mine.write_text(wrote)
-  return {"before": before, "wrote": wrote}
+  return mine, before, hidden(before if before is not None else source.read_text())
 
 
 def unhide_launcher(name: str, record: dict) -> bool:
@@ -292,18 +323,51 @@ def unhide_launcher(name: str, record: dict) -> bool:
   return True
 
 
-def apply_apps(apps: dict, mine: dict, applied: dict, dry_run: bool) -> list:
+def launcher_exists(desktop_id: str) -> bool:
+  return (applications_dir() / desktop_id).is_file() or bool(system_launcher(desktop_id.removesuffix(".desktop")))
+
+
+def mime_default(mime: str) -> str:
+  try:
+    return run(["xdg-mime", "query", "default", mime]).stdout.strip()
+  except OSError:
+    return ""
+
+
+def unset_mime(mime: str):
+  """xdg-mime can set a default but not clear one: drop the line it wrote."""
+  base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+  path = base / "mimeapps.list"
+  if not path.is_file():
+    return
+  out, section = [], ""
+  for line in path.read_text().splitlines():
+    if line.strip().startswith("["):
+      section = line.strip()
+    elif section == "[Default Applications]" and line.split("=", 1)[0].strip() == mime:
+      continue
+    out.append(line)
+  path.write_text("\n".join(out) + "\n")
+
+
+def apply_apps(recipe, apps: dict, mine: dict, applied: dict, dry_run: bool) -> list:
   lines = []
-  done = mine.setdefault("apps", {"hidden": {}, "added": {}})
+  done = mine.setdefault("apps", {})
+  for key in ("hidden", "added", "open"):
+    done.setdefault(key, {})
   for name in apps.get("hide", []):
     if name in done["hidden"]:
       continue
     if dry_run:
       lines.append(f"  would hide {name}")
       continue
-    record = hide_launcher(name)
-    if record:
-      done["hidden"][name] = record
+    plan = hide_launcher(name)
+    if plan:
+      path, before, text = plan
+      record_change(recipe.name, "hide", name=name, before=before, wrote=text)
+      path.parent.mkdir(parents=True, exist_ok=True)
+      path.write_text(text)
+      done["hidden"][name] = True
       lines.append(f"  hid       {name}")
   for kind, installer in (("webapps", "omarchy-webapp-install"), ("tuis", "omarchy-tui-install")):
     for entry in apps.get(kind, []):
@@ -317,6 +381,7 @@ def apply_apps(apps: dict, mine: dict, applied: dict, dry_run: bool) -> list:
       if dry_run:
         lines.append(f"  would add {name}")
         continue
+      record_change(recipe.name, "added", name=name, type=kind)
       args = [entry["url"], entry["icon"]] if kind == "webapps" else [entry["command"], entry["style"], entry["icon"]]
       result = run([installer, name, *args])
       if result.returncode != 0:
@@ -324,30 +389,107 @@ def apply_apps(apps: dict, mine: dict, applied: dict, dry_run: bool) -> list:
         continue
       done["added"][name] = kind
       lines.append(f"  added     {name}")
+  for mime, app in (apps.get("open") or {}).items():
+    if done["open"].get(mime) == app:
+      continue
+    if not launcher_exists(app):
+      lines.append(f"  skipped   {app} for {mime}: it isn't installed")
+      continue
+    current = mime_default(mime)
+    if dry_run:
+      if current != app:
+        lines.append(f"  would open {mime} with {app}")
+      continue
+    if current != app:
+      record_change(recipe.name, "mime", type=mime, before=current, value=app)
+      result = run(["xdg-mime", "default", app, mime])
+      if result.returncode != 0:
+        lines.append(f"  FAILED    {mime} with {app}: " + (result.stderr or result.stdout).strip()[:200])
+        continue
+      lines.append(f"  opens     {mime} with {app}")
+    done["open"][mime] = app
   if not dry_run:
     save_defaults(applied)
   return lines
 
 
-def restore_apps(done: dict) -> tuple:
-  """(lines, what failed or is left to do)."""
-  lines, left = [], {"hidden": {}, "added": {}}
-  for name, record in done.get("hidden", {}).items():
-    if unhide_launcher(name, record):
-      lines.append(f"  restored  {name} in the launcher")
-    else:
-      lines.append(f"  kept      {name}: you changed its launcher since")
-  for name, kind in done.get("added", {}).items():
-    if not kind or not (applications_dir() / f"{name}.desktop").exists():
+# ---- the undo log: what each change replaced, oldest first
+
+def undo_file() -> Path:
+  return state_file().with_name("undo.json")
+
+
+def load_undo() -> list:
+  try:
+    changes = json.loads(undo_file().read_text())
+  except (OSError, ValueError):
+    return []
+  return changes if isinstance(changes, list) else []
+
+
+def save_undo(changes: list):
+  path = undo_file()
+  if not changes:
+    path.unlink(missing_ok=True)
+    return
+  path.parent.mkdir(parents=True, exist_ok=True)
+  staged = path.with_suffix(".tmp")
+  staged.write_text(json.dumps(changes, indent=2) + "\n")
+  staged.replace(path)
+
+
+def record_change(flavor: str, kind: str, **fields):
+  """Written before the change is made: what it replaces. umami remove
+  undoes the changes newest first, each only where it still stands as the
+  flavor left it, so a later flavor's change, or a later release's, comes
+  off before the one under it."""
+  save_undo(load_undo() + [{"flavor": flavor, "kind": kind, **fields, "at": time.time()}])
+
+
+OLD_KEYS = ("before_theme", "before_bar", "before", "applied_at")
+
+
+def load_applied() -> dict:
+  """defaults.json: what each flavor has done once for this user, so it
+  isn't done again. Records from before the undo log kept one baseline per
+  flavor; they become log entries, oldest flavor first."""
+  try:
+    applied = json.loads(defaults_file().read_text())
+  except (OSError, ValueError):
+    return {}
+  if not isinstance(applied, dict):
+    return {}
+  old = [m for m in applied.values() if isinstance(m, dict) and (set(m) & set(OLD_KEYS) or any(
+      isinstance(v, dict) for v in ((m.get("apps") or {}).get("hidden") or {}).values()))]
+  if not old:
+    return applied
+  changes = load_undo()
+  for name, mine in sorted(applied.items(), key=lambda item: (item[1] or {}).get("applied_at") or 0):
+    if not isinstance(mine, dict):
       continue
-    remover = "omarchy-webapp-remove" if kind == "webapps" else "omarchy-tui-remove"
-    result = run([remover, name])
-    if result.returncode == 0:
-      lines.append(f"  removed   {name}")
-    else:
-      left["added"][name] = kind
-      lines.append(f"  FAILED    removing {name}: " + (result.stderr or result.stdout).strip()[:200])
-  return lines, (left if left["added"] else None)
+    at = mine.get("applied_at") or 0
+    entry = lambda kind, **f: changes.append({"flavor": name, "kind": kind, **f, "at": at})
+    if mine.get("theme") and mine.get("before_theme"):
+      entry("theme", before=mine["before_theme"], value=mine["theme"])
+    if mine.get("bar_done") and "before_bar" in mine:
+      entry("bar", commands=[json.loads(k) for k in mine["bar_done"]], before=mine["before_bar"])
+    for key, value in (mine.get("settings") or {}).items():
+      before = (mine.get("before") or {}).get(key)
+      if before not in (None, "", {}):
+        entry("setting", key=key, before=before, value=value)
+    apps = mine.get("apps") or {}
+    for app, record in (apps.get("hidden") or {}).items():
+      if isinstance(record, dict):
+        entry("hide", name=app, before=record.get("before"), wrote=record.get("wrote"))
+        apps["hidden"][app] = True
+    for app, kind in (apps.get("added") or {}).items():
+      if kind:
+        entry("added", name=app, type=kind)
+    for key in OLD_KEYS:
+      mine.pop(key, None)
+  save_undo(changes)
+  save_defaults(applied)
+  return applied
 
 
 def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
@@ -358,29 +500,24 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
   is theirs and stays. The bar is tracked entry by entry, so a flavor that
   changes one widget moves only that one, not the rest of the user's layout.
   """
-  try:
-    applied = json.loads(defaults_file().read_text())
-  except (OSError, ValueError):
-    applied = {}
-  if not isinstance(applied, dict):
-    applied = {}
+  applied = load_applied()
   mine = applied.setdefault(recipe.name, {})
   # Earlier versions stored the whole bar table once it was applied.
   if isinstance(mine.get("bar"), dict):
     mine["bar_done"] = sorted({command_key(c) for c in bar_commands(mine.pop("bar"))})
+  change = lambda kind, **fields: record_change(recipe.name, kind, **fields)
   lines = []
   # The theme brings its own background: what umami remove puts back is the
   # one from before either changed.
+  background_before = None
   if not dry_run and "background" in recipe.defaults and "background" not in mine.get("settings", {}):
-    mine.setdefault("before", {}).setdefault("background", get_setting("background"))
+    background_before = get_setting("background")
   theme = recipe.defaults.get("theme")
   if theme and mine.get("theme") != theme:
     if dry_run:
       lines.append(f"  would set theme {theme}")
     else:
-      # What `umami remove` puts back, while it is still the flavor's.
-      mine.setdefault("before_theme", current_theme())
-      mine["applied_at"] = time.time()
+      change("theme", before=current_theme(), value=theme)
       set_theme(theme)
       mine["theme"] = theme
       save_defaults(applied)
@@ -399,8 +536,7 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
       if dry_run:
         lines += [f"  would run {' '.join(c)}" for c in todo]
       elif todo:
-        mine.setdefault("before_bar", bar_layout())
-        mine["applied_at"] = time.time()
+        change("bar", commands=todo, before=bar_layout())
         skipped = run_bar(todo, shell_timeout)
         done |= {command_key(c) for c in todo}
         current = {command_key(c) for c in commands}
@@ -425,46 +561,59 @@ def apply_defaults(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> 
       save_defaults(applied)
       lines.append(f"  skipped   power profile {value}: this machine doesn't have it")
       continue
-    mine.setdefault("before", {}).setdefault(key, get_setting(key))
-    mine["applied_at"] = time.time()
-    try:
-      set_setting(key, value)
-    except PluginError as error:
-      lines.append(f"  FAILED    {error}")
-      continue
+    before = background_before if key == "background" and background_before is not None else get_setting(key)
+    if not same_setting(key, before, value):
+      change("setting", key=key, before=before, value=value)
+      try:
+        set_setting(key, value)
+      except PluginError as error:
+        lines.append(f"  FAILED    {error}")
+        continue
+      lines.append(f"  set       {describe(key, value)}")
     settings[key] = value
     save_defaults(applied)
-    lines.append(f"  set       {describe(key, value)}")
   if recipe.defaults.get("apps"):
-    lines += apply_apps(recipe.defaults["apps"], mine, applied, dry_run)
-  return lines + apply_locked(recipe, dry_run, shell_timeout, waiting)
+    lines += apply_apps(recipe, recipe.defaults["apps"], mine, applied, dry_run)
+  return lines + apply_locked(recipe, applied, mine, dry_run, shell_timeout, waiting)
 
 
-def apply_locked(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
-  """[locked]: the flavor's theme and bar, put back at every login."""
+def apply_locked(recipe, applied: dict, mine: dict, dry_run=False, shell_timeout=60.0, waiting=False) -> list:
+  """[locked]: the flavor's theme, settings and bar, put back at every
+  login. The first time a lock changes something, what it replaced goes in
+  the undo log, so umami remove can put it back."""
   lines = []
+  locks = set(mine.get("locked") or [])
+
+  def first_time(lock: str, kind: str, **fields):
+    if lock in locks:
+      return
+    record_change(recipe.name, kind, **fields)
+    locks.add(lock)
+    mine["locked"] = sorted(locks)
+    save_defaults(applied)
+
   theme = recipe.locked.get("theme")
   if theme:
-    try:
-      current = run(["omarchy-theme-current"]).stdout.strip()
-    except OSError:
-      current = ""
+    current = current_theme()
     norm = lambda name: name.strip().lower().replace("-", " ")
     if norm(current) != norm(theme):
       if dry_run:
         lines.append(f"  would set theme {theme} (locked)")
       else:
+        first_time(f"theme={theme}", "theme", before=current, value=theme)
         set_theme(theme)
         lines.append(f"  locked    theme {theme}")
   for key in SETTING_ORDER:
     if key not in recipe.locked:
       continue
     value = setting_value(recipe, key)
-    if same_setting(key, get_setting(key), value):
+    current = get_setting(key)
+    if same_setting(key, current, value):
       continue
     if dry_run:
       lines.append(f"  would set {describe(key, value)} (locked)")
       continue
+    first_time(f"{key}={json.dumps(value, sort_keys=True)}", "setting", key=key, before=current, value=value)
     try:
       set_setting(key, value)
       lines.append(f"  locked    {describe(key, value)}")
@@ -478,6 +627,7 @@ def apply_locked(recipe, dry_run=False, shell_timeout=60.0, waiting=False) -> li
     if dry_run:
       lines += [f"  would run {' '.join(c)} (locked)" for c in commands]
     elif commands:
+      first_time("bar=" + json.dumps(commands), "bar", commands=commands, before=bar_layout())
       skipped = run_bar(commands, shell_timeout)
       lines.append("  locked    bar layout")
       lines += skipped
@@ -559,85 +709,118 @@ def restore_pairs(done: list, before: dict, now: dict) -> tuple:
   return sorted(undo, key=order), changed
 
 
-def restore_defaults(shell_timeout: float = 60.0, dry_run: bool = False) -> list:
-  """Put back the theme and bar each flavor changed, latest flavor first,
-  where they are still as the flavor left them; then forget the flavors.
-  What fails is remembered, so running it again retries just that."""
-  try:
-    applied = json.loads(defaults_file().read_text())
-  except (OSError, ValueError):
-    return []
-  if not isinstance(applied, dict):
-    return []
-  norm = lambda name: name.strip().lower().replace("-", " ")
-  lines, remaining = [], {}
-  for name, mine in sorted(applied.items(), key=lambda item: -(item[1].get("applied_at") or 0)):
-    left = {**mine, "bar_done": [], "settings": {}}
-    left.pop("theme", None)
-    left.pop("apps", None)
-    if mine.get("theme") and mine.get("before_theme"):
-      if norm(current_theme()) == norm(mine["theme"]):
-        if dry_run:
-          lines.append(f"  would restore theme {mine['before_theme']}")
+def restore_defaults(shell_timeout: float = 60.0, dry_run: bool = False, keep: str | None = None) -> list:
+  """Undo what the flavors changed for this user, newest change first, each
+  where it is still as the flavor left it; then forget those flavors. The
+  installed flavor's own changes (keep) stay. What fails stays in the log,
+  so running it again retries just that."""
+  applied = load_applied()
+  changes = load_undo()
+  norm = lambda name: str(name).strip().lower().replace("-", " ")
+  lines, left, background = [], {}, None
+  shell = {"ready": None}
+
+  def shell_up() -> bool:
+    if shell["ready"] is None:
+      shell["ready"] = wait_for_shell(shell_timeout)
+    return shell["ready"]
+
+  for index in reversed(range(len(changes))):
+    change = changes[index]
+    flavor, kind = change.get("flavor"), change.get("kind")
+    if flavor == keep:
+      continue
+    try:
+      if kind == "theme":
+        if norm(current_theme()) != norm(change["value"]):
+          lines.append(f"  kept      theme {current_theme()}: you changed it after {flavor} set it")
+        elif dry_run:
+          lines.append(f"  would restore theme {change['before']}")
+        elif change.get("before"):
+          set_theme(change["before"])
+          lines.append(f"  restored  theme {change['before']}")
+      elif kind == "setting":
+        key, before = change["key"], change.get("before")
+        if before in (None, "", {}):
+          continue
+        if not same_setting(key, get_setting(key), change["value"]):
+          lines.append(f"  kept      {key.replace('_', ' ')}: you changed it after {flavor} set it")
+        elif dry_run:
+          lines.append(f"  would restore {describe(key, before)}")
+        elif key == "background":
+          background = (index, before)  # last: a theme put back brings its own
         else:
-          try:
-            set_theme(mine["before_theme"])
-            lines.append(f"  restored  theme {mine['before_theme']}")
-          except PluginError as error:
-            left["theme"] = mine["theme"]
-            lines.append(f"  FAILED    {error}")
-      else:
-        lines.append(f"  kept      theme {current_theme()}: you changed it after {name} set it")
-    done = [json.loads(key) for key in mine.get("bar_done", [])]
-    if done and "before_bar" not in mine:
-      lines.append(f"  kept      bar layout: nothing was saved from before {name}")
-    elif done:
-      pairs, changed = restore_pairs(done, mine["before_bar"], bar_layout())
-      if pairs and dry_run:
-        lines += [f"  would run {' '.join(command)}" for command, _ in pairs]
-      elif pairs:
-        if not wait_for_shell(shell_timeout):
-          raise PluginError("bar layout: the shell is not running (run umami user-sync --remove again)")
-        for command, source in pairs:
-          result = run_shell_call(command)
-          if result.returncode != 0:
-            left["bar_done"].append(command_key(source))
-            lines.append(f"  FAILED    {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:200])
-        if len(left["bar_done"]) < len(pairs):
-          lines.append("  restored  bar layout")
-      lines += [f"  kept      {wid}: you changed it after {name} did" for wid in sorted(set(changed))]
-    for key, value in (mine.get("settings") or {}).items():
-      before = (mine.get("before") or {}).get(key)
-      if before in (None, "", {}):
-        continue
-      if not same_setting(key, get_setting(key), value):
-        lines.append(f"  kept      {key.replace('_', ' ')}: you changed it after {name} set it")
-      elif dry_run:
-        lines.append(f"  would restore {describe(key, before)}")
-      else:
-        try:
           set_setting(key, before)
           lines.append(f"  restored  {describe(key, before)}")
-        except PluginError as error:
-          left["settings"][key] = value
-          lines.append(f"  FAILED    {error}")
-    if mine.get("apps") and dry_run:
-      lines += [f"  would restore {n} in the launcher" for n in mine["apps"].get("hidden", {})]
-      lines += [f"  would remove {n}" for n, kind in mine["apps"].get("added", {}).items() if kind]
-    elif mine.get("apps"):
-      app_lines, apps_left = restore_apps(mine["apps"])
-      lines += app_lines
-      if apps_left:
-        left["apps"] = apps_left
-    if left.get("theme") or left["bar_done"] or left["settings"] or left.get("apps"):
-      remaining[name] = left
+      elif kind == "bar":
+        pairs, changed = restore_pairs(change["commands"], change["before"], bar_layout())
+        if pairs and dry_run:
+          lines += [f"  would run {' '.join(command)}" for command, _ in pairs]
+        elif pairs:
+          if not shell_up():
+            raise PluginError("bar layout: the shell is not running")
+          failed = []
+          for command, source in pairs:
+            result = run_shell_call(command)
+            if result.returncode != 0:
+              failed.append(source)
+              lines.append(f"  FAILED    {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:200])
+          if failed:
+            left[index] = {**change, "commands": failed}
+          if len(failed) < len(pairs):
+            lines.append("  restored  bar layout")
+        lines += [f"  kept      {wid}: you changed it after {flavor} did" for wid in sorted(set(changed))]
+      elif kind == "hide":
+        if dry_run:
+          lines.append(f"  would restore {change['name']} in the launcher")
+        elif unhide_launcher(change["name"], change):
+          lines.append(f"  restored  {change['name']} in the launcher")
+        else:
+          lines.append(f"  kept      {change['name']}: you changed its launcher since")
+      elif kind == "added":
+        if not (applications_dir() / f"{change['name']}.desktop").exists():
+          continue
+        if dry_run:
+          lines.append(f"  would remove {change['name']}")
+          continue
+        remover = "omarchy-webapp-remove" if change["type"] == "webapps" else "omarchy-tui-remove"
+        result = run([remover, change["name"]])
+        if result.returncode != 0:
+          raise PluginError(f"removing {change['name']}: " + (result.stderr or result.stdout).strip()[:200])
+        lines.append(f"  removed   {change['name']}")
+      elif kind == "mime":
+        mime = change["type"]
+        if mime_default(mime) != change["value"]:
+          lines.append(f"  kept      {mime}: you changed what opens it after {flavor} set it")
+        elif dry_run:
+          lines.append(f"  would open {mime} with {change['before'] or 'what it did before'}")
+        elif change.get("before"):
+          run(["xdg-mime", "default", change["before"], mime])
+          lines.append(f"  restored  {mime} with {change['before']}")
+        else:
+          unset_mime(mime)
+          lines.append(f"  restored  {mime} as it was")
+    except (PluginError, KeyError, OSError) as error:
+      left[index] = change
+      lines.append(f"  FAILED    {error}")
+  if background and not dry_run:
+    index, before = background
+    try:
+      set_setting("background", before)
+      lines.append(f"  restored  {describe('background', before)}")
+    except PluginError as error:
+      left[index] = changes[index]
+      lines.append(f"  FAILED    {error}")
   if dry_run:
     return lines
+  save_undo([left.get(i, c) for i, c in enumerate(changes) if c.get("flavor") == keep or i in left])
+  remaining = {name: mine for name, mine in applied.items() if name == keep}
   if remaining:
     save_defaults(remaining)
-    lines.append(f"  run {SELF} user-sync --remove again to retry what failed")
   else:
     defaults_file().unlink(missing_ok=True)
+  if left:
+    lines.append(f"  run {SELF} user-sync --remove again to retry what failed")
   return lines
 
 
@@ -937,14 +1120,28 @@ def ask_removal(recipe, state: dict, ids: list) -> bool:
     return False
 
 
+def installed_flavor():
+  """The flavor installed now, if any: a review that opens after another
+  flavor was installed must leave that one's plugins and settings alone."""
+  try:
+    return load(INSTALLED_RECIPE) if INSTALLED_RECIPE.is_file() else None
+  except UmamiError:
+    return None
+
+
+@one_at_a_time
 def remove(interactive: bool = False, assume_yes: bool = False, dry_run: bool = False,
-           shell_timeout: float = 60.0) -> int:
-  """After `umami remove`, as each user: put back the theme and bar the
-  flavors set, and ask about the plugins they added. Asked right here in a
-  terminal (sudo umami remove's own), else in a terminal opened for it."""
-  lines = [] if interactive else restore_defaults(shell_timeout, dry_run=dry_run)
+           shell_timeout: float = 60.0, everything: bool = False) -> int:
+  """After `umami remove`, as each user: put back the theme, bar and
+  settings the flavors set, and ask about the plugins they added. Asked
+  right here in a terminal (sudo umami remove's own), else in a terminal
+  opened for it. everything: umami remove itself, while its recipe is still
+  in place; otherwise a flavor installed since is kept."""
+  current = None if everything else installed_flavor()
+  keep = current.name if current else None
+  lines = [] if interactive else restore_defaults(shell_timeout, dry_run=dry_run, keep=keep)
   state = load_state()
-  ids = leftovers(NoFlavor, state)
+  ids = leftovers(current or NoFlavor, state)
   if dry_run:
     lines += tidy(NoFlavor, state, ids, dry_run=True, interactive=False, assume_yes=False)
     print("removing the flavor would" + (":" if lines else " change nothing"))
@@ -964,6 +1161,18 @@ def remove(interactive: bool = False, assume_yes: bool = False, dry_run: bool = 
   return 0
 
 
+def login() -> int:
+  """At every login, from the package's autostart, whatever Omarchy runs
+  from. After umami remove, nothing of the flavor runs at login any more,
+  so this is what puts each user's things back; once it has, it does
+  nothing. On a flavor, the flavor's own login hook does the work."""
+  if INSTALLED_RECIPE.exists() or os.environ.get("OMARCHY_PATH", "").rstrip("/") == str(TREE):
+    return 0
+  if not (undo_file().exists() or defaults_file().exists() or leftovers(NoFlavor, load_state())):
+    return 0
+  return remove()
+
+
 def refresh() -> int:
   """Run inside the user's session after a live flavor switch: reload
   Hyprland and the shell from the new tree, then do what login does."""
@@ -981,6 +1190,7 @@ def refresh() -> int:
   return code
 
 
+@one_at_a_time
 def sync(recipe_path=TREE_RECIPE, dry_run=False, shell_timeout=60.0, interactive=False, assume_yes=False) -> int:
   recipe = load(recipe_path)
   state = load_state()

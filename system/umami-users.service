@@ -1,0 +1,6 @@
+[Unit]
+Description=Add new users to the umami flavor's groups
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/umami/bin/umami system-sync

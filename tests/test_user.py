@@ -35,7 +35,33 @@ FAKES = {
     "omarchy-webapp-install": 'echo "webapp $*" >> "$FAKE_LOG"; mkdir -p "$HOME/.local/share/applications"; '
                               'printf "[Desktop Entry]\\nName=%s\\n" "$1" > "$HOME/.local/share/applications/$1.desktop"',
     "omarchy-webapp-remove": 'echo "webapp-remove $*" >> "$FAKE_LOG"; rm -f "$HOME/.local/share/applications/$1.desktop"',
+    # Defaults by type, one file each in $FAKE_LOG.mime/.
+    "xdg-mime": 'd="$FAKE_LOG.mime"; mkdir -p "$d"; '
+                'if [[ $1 == query ]]; then cat "$d/${3//\\//_}" 2>/dev/null; else echo "$2" > "$d/${3//\\//_}"; fi',
 }
+
+
+# The whole module runs with a throwaway home and no XDG directories, so no
+# test can reach the real one's state, launchers or config, even one that
+# forgets to set up its own; and with no flavor installed.
+_module = {}
+
+
+def setUpModule():
+  _module["home"] = tempfile.TemporaryDirectory()
+  _module["env"] = dict(os.environ)
+  os.environ["HOME"] = _module["home"].name
+  for key in [k for k in os.environ if k.startswith("XDG_")]:
+    os.environ.pop(key)
+  _module["patch"] = mock.patch.object(user, "INSTALLED_RECIPE", Path(_module["home"].name) / "no-flavor.toml")
+  _module["patch"].start()
+
+
+def tearDownModule():
+  _module["patch"].stop()
+  os.environ.clear()
+  os.environ.update(_module["env"])
+  _module["home"].cleanup()
 
 
 def git(repo, *args):
@@ -244,6 +270,74 @@ class UserLayerTest(unittest.TestCase):
     Path(str(self.log) + ".font").write_text("Hack\n")
     user.sync(recipe, shell_timeout=1)
     self.assertEqual(self.font(), "Iosevka")
+
+  def test_each_change_is_undone_in_turn_across_flavors(self):
+    # A sets a theme, B another, then a new release of A changes only its
+    # bar. Removing goes back through B's theme and A's to the first one.
+    theme = Path(str(self.log) + ".theme")
+    theme.write_text("Nord\n")
+    user.sync(self.theme_recipe("Vantablack"), shell_timeout=1)
+    user.sync(self.write_recipe('[flavor]\nname = "b"\n\n[defaults]\ntheme = "Gruvbox"\n'), shell_timeout=1)
+    user.sync(self.write_recipe('[flavor]\nname = "test"\n\n[defaults]\ntheme = "Vantablack"\n\n'
+                                '[defaults.bar]\nset = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }]\n'),
+              shell_timeout=1)
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(theme.read_text().strip(), "Nord")
+
+  def test_a_locked_theme_is_put_back_on_removal(self):
+    theme = Path(str(self.log) + ".theme")
+    theme.write_text("Nord\n")
+    user.sync(self.write_recipe('[flavor]\nname = "company"\n\n[locked]\ntheme = "Tokyo Night"\n'))
+    user.sync(self.write_recipe('[flavor]\nname = "company"\n\n[locked]\ntheme = "Tokyo Night"\n'))
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual(theme.read_text().strip(), "Nord")
+
+  def test_what_opens_a_file_type_is_set_and_put_back(self):
+    share = Path(self.tmp.name) / "share"
+    (share / "applications").mkdir(parents=True)
+    (share / "applications/org.gnome.Papers.desktop").write_text("[Desktop Entry]\nName=Papers\n")
+    os.environ["XDG_DATA_DIRS"] = str(share)
+    mime = Path(str(self.log) + ".mime")
+    mime.mkdir()
+    (mime / "application_pdf").write_text("firefox.desktop\n")
+    user.sync(self.settings_recipe('[defaults.apps.open]\n"application/pdf" = "org.gnome.Papers.desktop"\n'
+                                   '"image/png" = "not-installed.desktop"\n'), shell_timeout=1)
+    self.assertEqual((mime / "application_pdf").read_text().strip(), "org.gnome.Papers.desktop")
+    self.assertFalse((mime / "image_png").exists())
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.remove()
+    self.assertEqual((mime / "application_pdf").read_text().strip(), "firefox.desktop")
+
+  def test_login_puts_things_back_only_once_the_flavor_is_gone(self):
+    os.environ.pop("OMARCHY_PATH", None)  # a session on stock
+    theme = Path(str(self.log) + ".theme")
+    theme.write_text("Nord\n")
+    user.sync(self.theme_recipe("Vantablack"), shell_timeout=1)
+    installed = Path(self.tmp.name) / "etc-umami/recipe.toml"
+    installed.parent.mkdir()
+    installed.write_text('[flavor]\nname = "test"\n')
+    with mock.patch.object(user, "INSTALLED_RECIPE", installed), contextlib.redirect_stdout(io.StringIO()):
+      user.login()
+      self.assertEqual(theme.read_text().strip(), "Vantablack")
+      installed.unlink()  # umami remove ran
+      user.login()
+    self.assertEqual(theme.read_text().strip(), "Nord")
+    self.log.write_text("")
+    with contextlib.redirect_stdout(io.StringIO()):
+      user.login()
+    self.assertNotIn("theme", self.log.read_text())
+
+  def test_a_late_review_leaves_a_flavor_installed_since_alone(self):
+    # Removed, then another flavor installed before this user's review ran.
+    self.sync(self.first)  # flavor "test" installs acme.dock
+    (Path(str(self.log) + ".theme")).write_text("Nord\n")
+    installed = self.write_recipe(self.recipe(self.first).read_text().replace('name = "test"', 'name = "next"'))
+    user.sync(installed, shell_timeout=1, assume_yes=True)
+    with mock.patch.object(user, "INSTALLED_RECIPE", installed), contextlib.redirect_stdout(io.StringIO()):
+      user.remove(assume_yes=True)
+    self.assertTrue(self.installed.exists())
 
   def test_hidden_launchers_come_back_on_removal(self):
     share = Path(self.tmp.name) / "share"
@@ -685,15 +779,17 @@ class RestoreBarTest(unittest.TestCase):
     now = {"left": [{"id": "omarchy.workspaces"}], "center": [{"id": "omarchy.clock", "format": "dddd HH:mm"}],
            "right": [{"id": "omarchy.audio"}]}
     with tempfile.TemporaryDirectory() as tmp:
-      record = Path(tmp) / "defaults.json"
-      record.write_text(json.dumps({"server": {"before_bar": self.BEFORE, "bar_done": [
+      state = Path(tmp) / "plugins.json"
+      # A record from before the undo log: one baseline for the flavor.
+      (Path(tmp) / "defaults.json").write_text(json.dumps({"server": {"before_bar": self.BEFORE, "bar_done": [
           user.command_key(self.DONE[0]), user.command_key(self.DONE[1])]}}))
       fails = lambda c: subprocess.CompletedProcess(c, 1 if "omarchy.menu" in c else 0, "", "busy")
-      with mock.patch.object(user, "defaults_file", lambda: record), mock.patch.object(user, "bar_layout", lambda: now), \
+      with mock.patch.object(user, "state_file", lambda: state), mock.patch.object(user, "bar_layout", lambda: now), \
            mock.patch.object(user, "wait_for_shell", lambda t: True), mock.patch.object(user, "run_shell_call", fails):
-        user.restore_defaults()
-      # The weather went back; the menu is still to do.
-      self.assertEqual(json.loads(record.read_text())["server"]["bar_done"], [user.command_key(self.DONE[1])])
+        with contextlib.redirect_stdout(io.StringIO()):
+          user.restore_defaults()
+        # The weather went back; the menu is still to do.
+        self.assertEqual([c["commands"] for c in user.load_undo()], [[self.DONE[1]]])
 
   def test_entries_you_changed_since_are_left_alone(self):
     # The user turned the menu back on, moved the clock right, and set its format.

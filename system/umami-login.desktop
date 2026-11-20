@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=umami
+Comment=After a flavor is removed, put back each user's theme, bar and settings at their next login
+Exec=/usr/lib/umami/bin/umami user-sync --login
+NoDisplay=true

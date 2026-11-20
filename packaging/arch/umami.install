@@ -4,6 +4,7 @@ post_install() {
 }
 
 pre_remove() {
+  systemctl disable --now umami-users.path 2>/dev/null || true
   # Point Omarchy back at stock before the compositor goes away.
   if grep -q '^# Written by umami' /etc/omarchy.conf 2>/dev/null; then
     /usr/lib/umami/bin/umami disable

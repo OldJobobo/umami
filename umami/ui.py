@@ -51,6 +51,8 @@ def applied_count(report: dict) -> str:
 def verdict(report: dict, done: bool = False) -> str:
   """The whole composition in a sentence; done: it already ran."""
   off = problems(report)
+  if report.get("error"):
+    return f"Not applied: composing it stopped on an error: {report['error']}"
   if report["status"] == "failed":
     names = ", ".join(report.get("blocking") or []) or "a required change"
     return f"Not applied: {names} could not apply, and the flavor needs it."
@@ -192,7 +194,7 @@ def setting_parts(table: dict) -> list:
 
 def apps_summary(apps: dict) -> str:
   parts = [f"{len(apps[k])} {label}" for k, label in (("hide", "hidden"), ("webapps", "web apps added"),
-                                                       ("tuis", "TUIs added")) if apps.get(k)]
+                                                       ("tuis", "TUIs added"), ("open", "file types")) if apps.get(k)]
   return "launchers: " + ", ".join(parts) if parts else ""
 
 
@@ -205,7 +207,9 @@ def system_parts(system: dict) -> list:
                       services.get("disable") and "off: " + short(services["disable"]),
                       system.get("groups") and "users in " + ", ".join(system["groups"]),
                       system.get("timezone") and f"timezone {system['timezone']}",
-                      system.get("channel") and f"expects the {system['channel']} channel") if f]
+                      system.get("channel") and f"expects the {system['channel']} channel",
+                      system.get("firewall") and "ports open: " + ", ".join(system["firewall"]["allow"]),
+                      system.get("wake_on_lan") and "wakes on LAN") if f]
 
 
 def builtin_lines(report: dict) -> list:

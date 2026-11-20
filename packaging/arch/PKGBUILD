@@ -20,6 +20,9 @@ package() {
   install -d "$pkgdir/usr/bin"
   ln -s /usr/lib/umami/bin/umami "$pkgdir/usr/bin/umami"
   install -Dm644 system/90-umami.hook "$pkgdir/usr/share/libalpm/hooks/90-umami.hook"
+  # At each login: after a flavor is removed, each user's things go back.
+  install -Dm644 system/umami-login.desktop "$pkgdir/etc/xdg/autostart/umami.desktop"
+  install -Dm644 -t "$pkgdir/usr/lib/systemd/system" system/umami-users.path system/umami-users.service
 
   # The example flavors.
   local flavor

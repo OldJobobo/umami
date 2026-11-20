@@ -29,7 +29,7 @@ from .lua import literal
 
 # Hyprland config sections a declarative lua.set may touch: how windows look
 # and are laid out, and how the keyboard, touchpad and cursor behave. Not
-# monitors, binds, rules, environment, or exec. A value here is a default:
+# monitors, binds, rules (window.rule has its own checks), environment, or exec. A value here is a default:
 # the user's own ~/.config/hypr/input.lua loads after it and wins.
 LUA_SET_SECTIONS = {"general", "decoration", "animations", "dwindle", "master", "scrolling", "group", "misc",
                     "input", "cursor"}
@@ -45,6 +45,28 @@ PLUGIN_FILE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-
 def plugin_file_ok(path) -> bool:
   """A plain relative .lua path: no leading slash, no '..' or hidden parts."""
   return isinstance(path, str) and bool(PLUGIN_FILE.match(path)) and ".." not in path
+
+# window.rule: what a declarative rule may match on, and what it may do: where
+# and how a window opens and how it looks. None of them runs anything.
+WINDOW_MATCH = {"class", "title", "initial_class", "initial_title", "tag", "xwayland"}
+WINDOW_RULES = {"float", "tile", "fullscreen", "maximize", "center", "size", "move", "workspace", "pin",
+                "opacity", "no_blur", "no_shadow", "no_anim", "rounding", "border_size", "idle_inhibit",
+                "stay_focused", "tag"}
+
+
+def check_window_rule(match, rules):
+  """Raise ValueError unless match and rules are a plain window rule."""
+  one_line = lambda v: isinstance(v, str) and v and "\n" not in v
+  if not (isinstance(match, dict) and match and not set(match) - WINDOW_MATCH
+          and all(one_line(v) or isinstance(v, bool) for v in match.values())):
+    raise ValueError(f"match is a table of {', '.join(sorted(WINDOW_MATCH))}, such as {{ class = \"omacalc\" }}")
+  scalar = lambda v: isinstance(v, (bool, int, float)) or one_line(v)
+  pair = lambda v: isinstance(v, list) and len(v) == 2 and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in v)
+  if not (isinstance(rules, dict) and rules and not set(rules) - WINDOW_RULES
+          and all(scalar(v) or pair(v) for v in rules.values())):
+    raise ValueError(f"rules is a table of {', '.join(sorted(WINDOW_RULES))}, each a plain value "
+                     "(size and move take {{ width, height }})")
+
 
 # What a declarative removal may take away: things on screen, not services.
 REMOVABLE_KINDS = {"bar-widget", "panel", "overlay", "menu"}
@@ -105,7 +127,7 @@ def code_reason(ttype: str, options: dict):
     if "action" in options:
       return None
     return "binds a key to raw Lua" if "lua" in options else "binds a key to a shell command"
-  if ttype in ("bind.remove", "shell.plugins.remove", "plugin.hypr"):
+  if ttype in ("bind.remove", "shell.plugins.remove", "plugin.hypr", "window.rule"):
     return None
   return {
       "lua": "adds raw Lua",

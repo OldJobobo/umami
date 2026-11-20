@@ -25,10 +25,11 @@ From stock Omarchy, reboot to start the flavor. From one flavor to another, the 
 
 To take a flavor off the machine, run `sudo umami remove` and reboot. It points Omarchy back at stock and removes what the flavor added:
 
-- in your session, your theme and each bar entry go back to what they were before the flavor, unless you've changed them since, and it asks whether to remove the plugins it added.
-- the packages it installed, after listing them and any dependencies that would go with them, unless something else needs them. Packages you had before are never touched, and a shell suite's package stays while a user still has the suite.
+- in your session, your theme, bar, settings and launchers go back to what they were before the flavor, unless you've changed them since, and it asks whether to remove the plugins it added. Each change is undone in turn, newest first, so what a later flavor or a lock changed comes off before what was under it.
+- the packages it installed, after listing them and any dependencies that would go with them, unless something else needs them. Packages you had before are never touched, a package someone removed and installed again since stays, and a shell suite's package stays while a user still has the suite.
+- what it changed on the machine (`[system]`) and the stock apps it removed.
 
-The flavor stays available, so `sudo umami flavor <name>` installs it again. Other users get their theme, bar and plugin question with `umami user-sync --remove` while logged in (`--dry-run` shows what it would do). If Omarchy is dev-linked to a checkout, that link stays. The flavor's files stay until no session runs from them. Flavors installed before umami recorded packages and the old theme and bar keep those as they are.
+Both `sudo umami flavor` and `sudo umami remove` take a snapper snapshot first, as `omarchy update` does, so the boot menu can go back to before them. The flavor stays available, so `sudo umami flavor <name>` installs it again. Everyone else gets their things back and the plugin question at their next login, whatever Omarchy runs then (`umami user-sync --remove --dry-run` shows what it would do). If Omarchy is dev-linked to a checkout, that link stays. The flavor's files stay until no session runs from them. Flavors installed before umami recorded packages and the old theme and bar keep those as they are.
 
 To only switch back to stock and keep everything, run `sudo umami disable` and reboot. Removing the package (`sudo pacman -R umami`) does that first; after the reboot you can delete `/etc/umami` and `/var/lib/umami`.
 
@@ -133,7 +134,8 @@ A flavor is declarative unless its `[flavor]` table says `code = true`. A declar
 
 - `lua.set` on how windows look and are laid out (`general`, `decoration`, `animations`, `dwindle`, `master`, `scrolling`, `group`, `misc`) and how the keyboard, touchpad and cursor behave (`input`, `cursor`), with plain values. Your own `~/.config/hypr/input.lua` loads after the flavor and wins
 - `bind.remove`, and `bind.add` or `bind.replace` with an `action`: `focus` or `swap` (`l`, `r`, `u`, `d`), `layout` (a layout message), `omarchy` (an Omarchy command with plain arguments), `menu` or `panel`
-- `shell.plugins.remove` of bar widgets, panels, overlays and menus (not services such as the lock screen)
+- `shell.plugins.remove` and `[defaults.bar] remove` of bar widgets, panels, overlays and menus (not services such as the lock screen or idle)
+- `window.rule`: where and how windows open and how they look, through Omarchy's own `o.window`
 - `plugin.hypr`, which loads a Hyprland Lua file that one of the recipe's own plugins ships (`plugin = "<id>"`, `file = "hypr/x.lua"`), from the user's install of it. It loads only if the user said yes to the plugin, and it runs as that user inside Hyprland, never as root. The code is the plugin's, not the flavor's.
 - `[defaults]`, `[locked]`, `[system]`, `[[plugin]]`, `[[package]]` and `[[suite]]`
 
@@ -171,9 +173,12 @@ idle = { screensaver = 0, lock = 300 } # seconds; 0 turns it off
 hide = ["YouTube", "WhatsApp"]        # out of the app launcher
 webapps = [{ name = "Wiki", url = "https://wiki.example.com", icon = "https://wiki.example.com/icon.png" }]
 tuis = [{ name = "Disk usage", command = "ncdu /", style = "float", icon = "disk" }]
+
+[defaults.apps.open]                  # what opens a kind of file or link (xdg-mime)
+"application/pdf" = "org.gnome.Papers.desktop"
 ```
 
-A hidden launcher gets `NoDisplay=true` in the user's own copy, so it still opens the files it handles; web apps and TUIs are added with `omarchy-webapp-install` and `omarchy-tui-install`, and a launcher the user already has by that name is left alone. `umami remove` puts each setting back unless the user changed it since, shows the hidden launchers again, and removes what it added.
+A hidden launcher gets `NoDisplay=true` in the user's own copy, so it still opens the files it handles; web apps and TUIs are added with `omarchy-webapp-install` and `omarchy-tui-install`, and a launcher the user already has by that name is left alone. An app for `open` that isn't installed is skipped until it is. `umami remove` puts each setting back unless the user changed it since, shows the hidden launchers again, removes what it added, and gives each file type back to the app that opened it before.
 
 ### Locks: what users can't change
 
@@ -194,9 +199,9 @@ locked = true
 | --- | --- | --- |
 | Widgets and panels | `[defaults.bar] remove`: switched off once, and can be turned back on | `shell.plugins.remove`: taken out of Omarchy, with nothing to turn back on |
 | Theme, bar and settings | `[defaults]`: applied once | `[locked]`: put back at every login |
-| Settings and keys | loaded before `~/.config/hypr`, so the user wins | `locked = true` on `lua.set`, `lua`, `bind.*` or `plugin.hypr`: loaded after it, so the flavor wins |
+| Settings, keys and window rules | loaded before `~/.config/hypr`, so the user wins | `locked = true` on `lua.set`, `lua`, `bind.*`, `window.rule` or `plugin.hypr`: loaded after it, so the flavor wins |
 
-`umami plan` and `umami status` list what is locked, so a missing feature reads as a decision rather than a fault. A widget the flavor removed answers `omarchy plugin enable` with "this machine's flavor removes it". A lock holds against Omarchy's settings, bar, menus and commands. It is not a security boundary: anyone with sudo can switch the flavor off. For that, give people accounts without admin rights.
+The first time a lock changes something, umami records what it replaced, and `umami remove` puts that back. `umami plan` and `umami status` list what is locked, so a missing feature reads as a decision rather than a fault. A widget the flavor removed answers `omarchy plugin enable` with "this machine's flavor removes it". A lock holds against Omarchy's settings, bar, menus and commands. It is not a security boundary: anyone with sudo can switch the flavor off. For that, give people accounts without admin rights.
 
 ### Over the theme
 
@@ -280,13 +285,15 @@ sleep = false                     # never suspend: not on idle, the lid or a key
 groups = ["docker"]               # the machine's users join these
 timezone = "Europe/Amsterdam"
 channel = "stable"                # checked, not switched
+firewall = { allow = ["80/tcp", "443/tcp"] }  # opened with ufw
+wake_on_lan = true                # wakes on a magic packet, through any wired card that can
 
 [system.services]
 enable = ["sshd", "tailscaled", "docker"]   # enabled and started
 disable = ["bluetooth", "cups"]             # disabled and stopped
 ```
 
-`sudo umami flavor` applies these after the flavor composes, and records what each was before. A service must already be installed, by Omarchy or one of the recipe's `[[package]]`s, or the switch stops before anything changes. `sleep = false` writes a drop-in to `/etc/systemd/logind.conf.d` and Omarchy's own `/etc/systemd/sleep.conf.d/omarchy-sleep-disabled.conf`, so the system menu leaves out Suspend and Hibernate too; the lid setting takes effect from the next boot. If Omarchy already wrote that file, on hardware that can't sleep, umami never deletes it. `groups` adds every account with a login shell, from its next login. `channel` is only checked: a switch updates the whole system, so umami says which command to run.
+`sudo umami flavor` applies these after the flavor composes, and records what each was before. A service must already be installed, by Omarchy or one of the recipe's `[[package]]`s, or the switch stops before anything changes. `sleep = false` writes a drop-in to `/etc/systemd/logind.conf.d` and Omarchy's own `/etc/systemd/sleep.conf.d/omarchy-sleep-disabled.conf`, so the system menu leaves out Suspend and Hibernate too; the lid setting takes effect from the next boot. If Omarchy already wrote that file, on hardware that can't sleep, umami never deletes it. `groups` adds every account with a login shell, from its next login, and anyone created later as they are created (the `umami-users.path` unit watches `/etc/passwd`); someone taken out of a group by hand stays out. `firewall` opens each port with `ufw allow` unless a rule for it is already there, and only the ports umami opened close again. `wake_on_lan` adds a drop-in to systemd's default `.link` settings, so it holds from the next boot, and turns it on now with `ethtool`. `channel` is only checked: a switch updates the whole system, so umami says which command to run.
 
 Enabling `sshd` turns password logins off first, the way `omarchy-setup-security-sshd` does, and checks with `sshd -T` that sshd really applies it; if another config overrides it, sshd stays off. Port 22 opens in the firewall, rate limited. Authorize a key with `omarchy-setup-security-sshd`.
 
@@ -311,6 +318,7 @@ Switching to another flavor undoes what it doesn't also set, and `umami remove` 
 | `shell.plugins.replace` | `plugin`, `source` | Reports IPC functions the original answered that the replacement doesn't |
 | `shell` | `source` (a directory with `shell.qml`) | Replaces the whole shell, with the same IPC check |
 | `plugin.hypr` | `plugin`, `file` | Loads a Hyprland file one of the recipe's plugins ships |
+| `window.rule` | `match` (`class`, `title`, `initial_class`, `initial_title`, `tag`, `xwayland`), `rules` | Written as `o.window`, like Omarchy's own app rules. Rules: `float`, `tile`, `center`, `size` and `move` (`[w, h]`), `workspace`, `fullscreen`, `maximize`, `pin`, `opacity`, `rounding`, `border_size`, `no_blur`, `no_shadow`, `no_anim`, `idle_inhibit`, `stay_focused`, `tag` |
 
 Every transform takes an `id`, and optionally `required = true` (the flavor fails without it), `locked = true` or `over_theme = true`. A relative `source` path is resolved from the recipe's directory and can't leave it.
 
@@ -349,8 +357,8 @@ The exit code is 2 when a required change fails, 1 when umami can't do what was 
 
 - umami copies stock Omarchy from `/usr/share/omarchy` with real files (`cp -rL --reflink=auto`), applies the recipe, and swaps the result into `/var/lib/umami/tree`. It points `/etc/omarchy.conf` and sudo's `secure_path` at that tree, and marks it `OMARCHY_PATH_TYPE=flavor` so Omarchy treats it as a package install, not a dev checkout. The package's `bin/` is symlinks into `/usr/bin`, and Omarchy's privileged commands refuse to run unless they resolve to `$OMARCHY_PATH/bin/<name>`, hence the real copy.
 - Hyprland changes become one generated module, `default/hypr/flavor.lua`, loaded from `default/hypr/omarchy.lua` after Omarchy's defaults and before the theme and `~/.config/hypr`. It calls the same APIs Omarchy does (`hl.config`, `o.rebind`, `hl.unbind`). `over_theme` settings go in `flavor-over-theme.lua`, right after the theme. Locked ones go in `flavor-locked.lua`, at the end of `toggles.lua`, which loads after the user's files.
-- The pacman hook (`90-umami.hook`) recomposes into `tree.new` inside the update transaction and then swaps it in, so Omarchy's migrations run from the composed tree.
-- `umami user-sync` runs as each user at login: defaults, locks, plugins and suites.
+- The pacman hook (`90-umami.hook`) recomposes into `tree.new` inside the update transaction and then swaps it in, in one step (`renameat2` with `RENAME_EXCHANGE`), so Omarchy's migrations run from the composed tree and the tree is never missing. One umami at a time changes the machine: the hook waits for a `umami flavor` in progress, and the other way round. A composition that fails, or stops on an error, leaves the running session as it is and points the next boot at stock.
+- `umami user-sync` runs as each user at login: defaults, locks, plugins and suites. Before each change it records what the change replaces in `~/.local/state/umami/undo.json`, which `umami remove` works back through. An autostart entry (`/etc/xdg/autostart/umami.desktop`) runs `umami user-sync --login` in every session; after a flavor is removed it puts that user's things back once, and otherwise does nothing.
 - Switching from stock changes `OMARCHY_PATH`, which the session reads once at login, so it needs a reboot. Between flavors the path stays the same and only the tree changes, so `umami flavor` swaps it and has your session run `umami refresh`: Hyprland reloads, the shell restarts, and the user layer runs as at login.
 - The tree carries a `.git` with no upstream, so `omarchy-update-dev` skips it instead of stopping the update. It is registered as a system git `safe.directory` because it is root-owned. Both go away once Omarchy has a flavor mode.
 - The last composition's report is `/var/lib/umami/report.json`, which `umami status` reads. The tree keeps its own copy in `.flavor/`, beside the recipe it was composed from.

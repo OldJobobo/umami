@@ -38,6 +38,9 @@ sudo rm -rf /etc/umami
 sudo mv /etc/umami.new /etc/umami
 
 sudo install -D -m 644 "$src/system/90-umami.hook" /etc/pacman.d/hooks/90-umami.hook
+sudo install -D -m 644 "$src/system/umami-login.desktop" /etc/xdg/autostart/umami.desktop
+sudo install -D -m 644 -t /etc/systemd/system "$src/system/umami-users.path" "$src/system/umami-users.service"
+sudo systemctl daemon-reload
 
 sudo /usr/lib/umami/bin/umami recompose
 sudo /usr/lib/umami/bin/umami enable

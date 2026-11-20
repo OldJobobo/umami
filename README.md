@@ -25,10 +25,10 @@ From stock Omarchy, reboot to start the flavor. From one flavor to another, the 
 
 To take a flavor off the machine, run `sudo umami remove` and reboot. It points Omarchy back at stock and removes what the flavor added:
 
-- the packages it installed, unless something else needs them. Packages you had before are never touched.
-- in your session, your theme and each bar entry go back to what they were before the flavor, unless you've changed them since, and a terminal asks whether to remove the plugins it added.
+- in your session, your theme and each bar entry go back to what they were before the flavor, unless you've changed them since, and it asks whether to remove the plugins it added.
+- the packages it installed, after listing them and any dependencies that would go with them, unless something else needs them. Packages you had before are never touched, and a shell suite's package stays while a user still has the suite.
 
-The flavor stays available, so `sudo umami flavor <name>` installs it again. Other users get their theme, bar and plugin question with `umami user-sync --remove` while logged in. Flavors installed before umami recorded packages and the old theme and bar keep those as they are.
+The flavor stays available, so `sudo umami flavor <name>` installs it again. Other users get their theme, bar and plugin question with `umami user-sync --remove` while logged in (`--dry-run` shows what it would do). If Omarchy is dev-linked to a checkout, that link stays. The flavor's files stay until no session runs from them. Flavors installed before umami recorded packages and the old theme and bar keep those as they are.
 
 To only switch back to stock and keep everything, run `sudo umami disable` and reboot. Removing the package (`sudo pacman -R umami`) does that first; after the reboot you can delete `/etc/umami` and `/var/lib/umami`.
 

@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -286,41 +287,49 @@ def placement(layout: dict, wid: str):
 def restore_commands(done: list, before: dict, now: dict) -> tuple:
   """Omarchy's commands that undo a flavor's bar entries, each only where
   the bar is still as the flavor left it; and the entries left alone."""
+  pairs, changed = restore_pairs(done, before, now)
+  return [undo for undo, _ in pairs], changed
+
+
+def restore_pairs(done: list, before: dict, now: dict) -> tuple:
+  """([(undo command, the flavor's command it undoes)], changed widgets)."""
   undo, changed = [], []
   for command in done:
     wid = command[2] if command[0] == "omarchy-bar" else command[1]
     was, is_ = placement(before, wid), placement(now, wid)
     if command[0] == "omarchy-plugin-disable":
       if was and not is_:
-        undo.append(["omarchy-plugin-enable", wid, "--section", was[0], "--index", str(was[1])])
+        undo.append((["omarchy-plugin-enable", wid, "--section", was[0], "--index", str(was[1])], command))
       elif was:
         changed.append(wid)
     elif command[1] == "put":
       if is_ and not was:
-        undo.append(["omarchy-plugin-disable", wid])
+        undo.append((["omarchy-plugin-disable", wid], command))
     elif command[1] == "move":
       if was and is_ and is_[0] == command[4]:
-        undo.append(["omarchy-bar", "move", wid, "--section", was[0], "--index", str(was[1])])
+        undo.append((["omarchy-bar", "move", wid, "--section", was[0], "--index", str(was[1])], command))
       elif was:
         changed.append(wid)
     elif command[1] == "set":
       key, value = command[3], command[4]
       if was and is_ and str(is_[2].get(key)) == value and key in was[2]:
-        undo.append(["omarchy-bar", "set", wid, key, str(was[2][key])])
+        undo.append((["omarchy-bar", "set", wid, key, str(was[2][key])], command))
       elif was and key in was[2]:
         changed.append(wid)
   # Taken off first, then put back in the order they stood, so each lands
   # at its old index, then their options.
-  def order(c):
+  def order(pair):
+    c = pair[0]
     if c[0] == "omarchy-plugin-disable":
       return (0, 0)
     return (2, 0) if c[1] == "set" else (1, int(c[-1]))
   return sorted(undo, key=order), changed
 
 
-def restore_defaults(shell_timeout: float = 60.0) -> list:
+def restore_defaults(shell_timeout: float = 60.0, dry_run: bool = False) -> list:
   """Put back the theme and bar each flavor changed, latest flavor first,
-  where they are still as the flavor left them; then forget the flavors."""
+  where they are still as the flavor left them; then forget the flavors.
+  What fails is remembered, so running it again retries just that."""
   try:
     applied = json.loads(defaults_file().read_text())
   except (OSError, ValueError):
@@ -328,29 +337,50 @@ def restore_defaults(shell_timeout: float = 60.0) -> list:
   if not isinstance(applied, dict):
     return []
   norm = lambda name: name.strip().lower().replace("-", " ")
-  lines = []
+  lines, remaining = [], {}
   for name, mine in sorted(applied.items(), key=lambda item: -(item[1].get("applied_at") or 0)):
+    left = {**mine, "bar_done": []}
+    left.pop("theme", None)
     if mine.get("theme") and mine.get("before_theme"):
       if norm(current_theme()) == norm(mine["theme"]):
-        set_theme(mine["before_theme"])
-        lines.append(f"  restored  theme {mine['before_theme']}")
+        if dry_run:
+          lines.append(f"  would restore theme {mine['before_theme']}")
+        else:
+          try:
+            set_theme(mine["before_theme"])
+            lines.append(f"  restored  theme {mine['before_theme']}")
+          except PluginError as error:
+            left["theme"] = mine["theme"]
+            lines.append(f"  FAILED    {error}")
       else:
         lines.append(f"  kept      theme {current_theme()}: you changed it after {name} set it")
     done = [json.loads(key) for key in mine.get("bar_done", [])]
     if done and "before_bar" not in mine:
       lines.append(f"  kept      bar layout: nothing was saved from before {name}")
     elif done:
-      undo, changed = restore_commands(done, mine["before_bar"], bar_layout())
-      if undo:
+      pairs, changed = restore_pairs(done, mine["before_bar"], bar_layout())
+      if pairs and dry_run:
+        lines += [f"  would run {' '.join(command)}" for command, _ in pairs]
+      elif pairs:
         if not wait_for_shell(shell_timeout):
           raise PluginError("bar layout: the shell is not running (run umami user-sync --remove again)")
-        for command in undo:
+        for command, source in pairs:
           result = run_shell_call(command)
           if result.returncode != 0:
+            left["bar_done"].append(command_key(source))
             lines.append(f"  FAILED    {' '.join(command)}: " + (result.stderr or result.stdout).strip()[:200])
-        lines.append("  restored  bar layout")
+        if len(left["bar_done"]) < len(pairs):
+          lines.append("  restored  bar layout")
       lines += [f"  kept      {wid}: you changed it after {name} did" for wid in sorted(set(changed))]
-  defaults_file().unlink(missing_ok=True)
+    if left.get("theme") or left["bar_done"]:
+      remaining[name] = left
+  if dry_run:
+    return lines
+  if remaining:
+    save_defaults(remaining)
+    lines.append(f"  run {SELF} user-sync --remove again to retry what failed")
+  else:
+    defaults_file().unlink(missing_ok=True)
   return lines
 
 
@@ -488,6 +518,10 @@ def tidy(recipe, state: dict, ids: list, dry_run: bool, interactive: bool, assum
     for pid in ids:
       if pid.startswith("suite:"):
         known = state[pid]
+        if not Path(known["command"]).exists():
+          lines.append(f"  FAILED    removing {label(pid, state)}: {known['command']} is gone; "
+                       f"reinstall the {known.get('package')} package to uninstall it")
+          continue
         result = run_shell_call([known["command"], *known["uninstall"]])
       else:
         result = run_shell_call(["omarchy-plugin-remove", pid, "--yes"])
@@ -603,13 +637,21 @@ def ask_removal(recipe, state: dict, ids: list) -> bool:
     return False
 
 
-def remove(interactive: bool = False, assume_yes: bool = False, shell_timeout: float = 60.0) -> int:
+def remove(interactive: bool = False, assume_yes: bool = False, dry_run: bool = False,
+           shell_timeout: float = 60.0) -> int:
   """After `umami remove`, as each user: put back the theme and bar the
-  flavors set, and ask about the plugins they added."""
-  lines = [] if interactive else restore_defaults(shell_timeout)
+  flavors set, and ask about the plugins they added. Asked right here in a
+  terminal (sudo umami remove's own), else in a terminal opened for it."""
+  lines = [] if interactive else restore_defaults(shell_timeout, dry_run=dry_run)
   state = load_state()
   ids = leftovers(NoFlavor, state)
-  if ids and not interactive and not assume_yes:
+  if dry_run:
+    lines += tidy(NoFlavor, state, ids, dry_run=True, interactive=False, assume_yes=False)
+    print("removing the flavor would" + (":" if lines else " change nothing"))
+    for line in lines:
+      print(line)
+    return 0
+  if ids and not interactive and not assume_yes and not sys.stdin.isatty():
     opened = open_review("--remove --review")
     lines.append("  waiting   for your answer about the flavor's plugins"
                  + ("" if opened else f" (run {SELF} user-sync --remove --review)"))

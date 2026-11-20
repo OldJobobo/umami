@@ -8,6 +8,7 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from umami import user
 from umami.recipe import RecipeError, load
@@ -166,6 +167,16 @@ class UserLayerTest(unittest.TestCase):
     with contextlib.redirect_stdout(io.StringIO()):
       user.remove()
     self.assertEqual(Path(str(self.log) + ".theme").read_text().strip(), "Gruvbox")
+
+  def test_a_dry_run_removal_changes_nothing(self):
+    (Path(str(self.log) + ".theme")).write_text("Nord\n")
+    self.assertEqual(user.sync(self.theme_recipe("Vantablack"), shell_timeout=1), 0)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+      user.remove(dry_run=True)
+    self.assertIn("would restore theme Nord", out.getvalue())
+    self.assertEqual(Path(str(self.log) + ".theme").read_text().strip(), "Vantablack")
+    self.assertTrue(user.defaults_file().exists())
 
   def test_the_default_theme_is_set_once(self):
     self.assertEqual(user.sync(self.theme_recipe("Vantablack")), 0)
@@ -569,6 +580,20 @@ class RestoreBarTest(unittest.TestCase):
         ["omarchy-bar", "set", "omarchy.clock", "format", "dddd HH:mm"],
     ])
     self.assertEqual(changed, [])
+
+  def test_what_failed_to_go_back_is_kept_to_retry(self):
+    now = {"left": [{"id": "omarchy.workspaces"}], "center": [{"id": "omarchy.clock", "format": "dddd HH:mm"}],
+           "right": [{"id": "omarchy.audio"}]}
+    with tempfile.TemporaryDirectory() as tmp:
+      record = Path(tmp) / "defaults.json"
+      record.write_text(json.dumps({"server": {"before_bar": self.BEFORE, "bar_done": [
+          user.command_key(self.DONE[0]), user.command_key(self.DONE[1])]}}))
+      fails = lambda c: subprocess.CompletedProcess(c, 1 if "omarchy.menu" in c else 0, "", "busy")
+      with mock.patch.object(user, "defaults_file", lambda: record), mock.patch.object(user, "bar_layout", lambda: now), \
+           mock.patch.object(user, "wait_for_shell", lambda t: True), mock.patch.object(user, "run_shell_call", fails):
+        user.restore_defaults()
+      # The weather went back; the menu is still to do.
+      self.assertEqual(json.loads(record.read_text())["server"]["bar_done"], [user.command_key(self.DONE[1])])
 
   def test_entries_you_changed_since_are_left_alone(self):
     # The user turned the menu back on, moved the clock right, and set its format.

@@ -26,6 +26,7 @@ PACKAGES = STATE / "packages.json"
 REMOVED = STATE / "removed"
 OMARCHY_CONF = Path("/etc/omarchy.conf")
 SUDOERS = Path("/etc/sudoers.d/omarchy-dev-path")
+PROC = Path("/proc")
 SYSTEM_SECURE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/bin"
 CONF_MARKER = "# Written by umami"
 SELF = "/usr/lib/umami/bin/umami"
@@ -73,6 +74,15 @@ def point_at(path: Path):
     os.replace(staged.name, SUDOERS)
   finally:
     Path(staged.name).unlink(missing_ok=True)
+
+
+def configured_path() -> str:
+  """Where /etc/omarchy.conf points Omarchy from the next boot."""
+  if OMARCHY_CONF.is_file():
+    for line in OMARCHY_CONF.read_text().splitlines():
+      if line.startswith("export OMARCHY_PATH="):
+        return line.split("=", 1)[1].split()[0].strip('"').rstrip("/") or str(STOCK)
+  return str(STOCK)
 
 
 def summary(report: dict) -> str:
@@ -188,6 +198,7 @@ def enable(quiet: bool = False) -> int:
     raise UmamiError("there is no composed flavor yet. Pick one with: sudo umami flavor <name>")
   git_safe_directory()
   point_at(TREE)
+  REMOVED.unlink(missing_ok=True)  # chosen again: no longer waiting to be deleted
   if not quiet:
     print(f"After the next reboot, Omarchy runs the flavor ({TREE}).")
   return 0
@@ -226,12 +237,9 @@ def flavor(flavor: str) -> int:
   source = find_flavor(flavor, [d for d in (own_flavors(), EXAMPLES) if d])
   recipe = load(source / "recipe.toml")  # refuses a broken recipe before anything changes
 
-  if OMARCHY_CONF.is_file() and CONF_MARKER not in OMARCHY_CONF.read_text():
-    for line in OMARCHY_CONF.read_text().splitlines():
-      if line.startswith("export OMARCHY_PATH="):
-        current = line.split("=", 1)[1].strip('"')
-        if current.rstrip("/") != str(STOCK):
-          raise UmamiError(f"Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
+  current = configured_path()
+  if current not in (str(STOCK), str(TREE)):
+    raise UmamiError(f"Omarchy is dev-linked to {current}. Run omarchy dev unlink first.")
 
   ui.say(f"Flavor {recipe.name}, " + ("runs code, trusted like a package" if recipe.code
                                       else "declarative: nothing in it runs as written"))
@@ -342,6 +350,31 @@ def live_session():
   return session if session and runs_tree(*session[:2]) else None
 
 
+def tree_in_use() -> bool:
+  """Whether anything runs from the tree. Every process of a session on it
+  carries OMARCHY_PATH=<tree>, whoever is logged in and however, so this
+  sees sessions the user running sudo doesn't own."""
+  needle = f"OMARCHY_PATH={TREE}".encode()
+  for proc in PROC.iterdir() if PROC.is_dir() else []:
+    if not proc.name.isdigit() or int(proc.name) in (os.getpid(), os.getppid()):
+      continue
+    try:
+      if needle in (proc / "environ").read_bytes().split(b"\0"):
+        return True
+    except OSError:
+      continue
+  return False
+
+
+def session_env(name: str, uid: int) -> dict:
+  """The user's session environment (display, Hyprland, D-Bus, PATH), so a
+  command run from sudo's terminal reaches their desktop."""
+  out = subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in user_env(uid).items()],
+                        "systemctl", "--user", "show-environment"], capture_output=True, text=True).stdout
+  env = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+  return {**user_env(uid), **env, "HOME": pwd.getpwuid(uid).pw_dir}
+
+
 def run_in_session(name: str, uid: int, signature: str, command: str) -> bool:
   env = {**user_env(uid), "HYPRLAND_INSTANCE_SIGNATURE": signature}
   result = subprocess.run(["runuser", "-u", name, "--", "env", *[f"{k}={v}" for k, v in env.items()],
@@ -370,8 +403,14 @@ def boot_id() -> str:
 
 def clean_removed_tree():
   """Delete the tree of a removed flavor once nothing can run from it: after
-  the reboot that follows `umami remove`."""
+  the reboot that follows `umami remove`, while no session uses it and
+  Omarchy isn't pointed at it again."""
   if not (REMOVED.is_file() and TREE.exists()) or REMOVED.read_text().strip() == boot_id():
+    return False
+  if configured_path() == str(TREE):
+    REMOVED.unlink()
+    return False
+  if tree_in_use():
     return False
   shutil.rmtree(TREE)
   REMOVED.unlink()
@@ -398,12 +437,45 @@ def confirm(prompt: str) -> bool:
     return False
 
 
+def suite_users() -> dict:
+  """{package: [users]} for the shell suites users still have installed. A
+  suite's uninstaller is its package's command, so the package stays until
+  each of them has answered."""
+  holders = {}
+  for entry in pwd.getpwall():
+    if entry.pw_uid < 1000 or entry.pw_uid == 65534:
+      continue
+    try:
+      state = json.loads((Path(entry.pw_dir) / ".local/state/umami/plugins.json").read_text())
+    except (OSError, ValueError):
+      continue
+    for key, known in state.items() if isinstance(state, dict) else []:
+      if key.startswith("suite:") and isinstance(known, dict) and known.get("package"):
+        holders.setdefault(known["package"], []).append(entry.pw_name)
+  return holders
+
+
+def removal_set(names: list) -> list:
+  """Everything pacman removes with these: -Rns also takes dependencies
+  nothing else needs, which the question has to show."""
+  out = subprocess.run(["pacman", "-Rnsp", "--print-format", "%n", "--", *names], capture_output=True, text=True)
+  if out.returncode != 0:
+    raise UmamiError(f"pacman can't remove {', '.join(names)}: " + (out.stderr or out.stdout).strip()[:300])
+  return out.stdout.split()
+
+
 def drop_packages(assume_yes: bool):
   """Remove the packages flavors installed, except ones something else on
-  the machine still needs."""
+  the machine still needs or a user's suite still runs from."""
   record = installed_packages()
-  present = {name for name in record
-             if subprocess.run(["pacman", "-Q", "--", name], capture_output=True).returncode == 0}
+  installed = {name for name in record
+               if subprocess.run(["pacman", "-Q", "--", name], capture_output=True).returncode == 0}
+  present = set(installed)
+  suites = suite_users()
+  for name in sorted(present & set(suites)):
+    ui.say(f"Keeping package {name}: {', '.join(suites[name])} still has its suite "
+           "(umami user-sync --remove asks them; then run sudo umami remove again).")
+  present -= set(suites)
   needs = {name: required_by(name) for name in present}
   drop = set(present)
   while True:  # a package only the others in the list need can go with them
@@ -414,13 +486,16 @@ def drop_packages(assume_yes: bool):
   for name in sorted(present - drop):
     ui.say(f"Keeping package {name}: {', '.join(sorted(needs[name] - drop))} needs it.")
   if drop:
+    extra = sorted(set(removal_set(sorted(drop))) - drop)
     ui.say(f"Packages the flavor installed: {', '.join(sorted(drop))}")
+    if extra:
+      ui.say(f"With them, packages only they needed: {', '.join(extra)}")
     if not (assume_yes or confirm("Remove them?")):
       ui.say("Kept them. Remove them later with: sudo umami remove")
       return
     if subprocess.run(["omarchy-pkg-drop", *sorted(drop)]).returncode != 0:
       raise UmamiError(f"removing {', '.join(sorted(drop))} failed.")
-  save_packages({name: flavor for name, flavor in record.items() if name in present - drop})
+  save_packages({name: flavor for name, flavor in record.items() if name in installed - drop})
 
 
 def remove(assume_yes: bool = False) -> int:
@@ -438,22 +513,30 @@ def remove(assume_yes: bool = False) -> int:
     raise UmamiError("no flavor is installed.")
   if name:
     ui.say(f"Removing flavor {name}.")
-  drop_packages(assume_yes)
 
+  # Your half first, here, while the flavor's packages (a suite's own
+  # uninstaller among them) are still installed.
   session = hypr_session()
-  running = bool(session) and runs_tree(*session[:2])
-  if session and run_in_session(*session, f"{SELF} user-sync --remove"):
-    ui.say("In your session: the theme and bar go back to what you had, and a terminal asks about the flavor's plugins.")
+  if session:
+    user, uid, _ = session
+    flags = ["--yes"] if assume_yes else []
+    subprocess.run(["runuser", "-u", user, "--", "env", *[f"{k}={v}" for k, v in session_env(user, uid).items()],
+                    SELF, "user-sync", "--remove", *flags])
   else:
     ui.say("For each user, while logged in: umami user-sync --remove puts back the theme and bar and asks about the plugins.")
+  drop_packages(assume_yes)
 
-  point_at(STOCK)
+  current = configured_path()
+  if current in (str(STOCK), str(TREE)):
+    point_at(STOCK)
+  else:
+    ui.say(f"Omarchy is dev-linked to {current}; that stays as it is.")
   if RECIPE.parent.exists():
     shutil.rmtree(RECIPE.parent)
   REPORT.unlink(missing_ok=True)
-  if TREE.exists() and running:
+  if TREE.exists() and tree_in_use():
     REMOVED.write_text(boot_id() + "\n")
-    ui.say("This session still runs the flavor. Reboot to return to stock Omarchy.")
+    ui.say("A session still runs the flavor. Reboot to return to stock Omarchy.")
     ui.say("After the reboot, its files go at the next Omarchy update, or now with: sudo umami remove")
   else:
     if TREE.exists():
@@ -475,12 +558,7 @@ def omarchy_path_label(path: str) -> str:
 
 
 def status(as_json: bool = False) -> int:
-  configured = ""
-  if OMARCHY_CONF.is_file():
-    for line in OMARCHY_CONF.read_text().splitlines():
-      if line.startswith("export OMARCHY_PATH="):
-        configured = line.split("=", 1)[1].strip('"')
-  configured = configured or str(STOCK)
+  configured = configured_path()
   session = os.environ.get("OMARCHY_PATH", "")
   report = json.loads(REPORT.read_text()) if REPORT.is_file() else None
   if as_json:

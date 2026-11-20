@@ -86,6 +86,12 @@ class Recipe:
     return resolved
 
 
+
+def plain_text(value) -> bool:
+  """A non-empty, one-line string: names and ids end up in Lua comments and
+  command lines, where a line break would start new code."""
+  return isinstance(value, str) and bool(value) and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+
 def load(path) -> Recipe:
   path = Path(path).resolve()
   try:
@@ -97,6 +103,8 @@ def load(path) -> Recipe:
   name = meta.get("name")
   if not name:
     raise RecipeError("recipe needs [flavor] name = \"...\"")
+  if not plain_text(name):
+    raise RecipeError("[flavor] name must be one line of text")
 
   recipe = Recipe(name=name, path=path, omarchy=meta.get("omarchy", ""))
   seen = set()
@@ -106,6 +114,8 @@ def load(path) -> Recipe:
     ttype = raw.get("type")
     if not tid or not ttype:
       raise RecipeError(f"{where}: needs id and type")
+    if not plain_text(tid):
+      raise RecipeError(f"{where}: id must be one line of text")
     if tid in seen:
       raise RecipeError(f"{where}: duplicate id {tid!r}")
     seen.add(tid)
@@ -228,13 +238,14 @@ def check_bar_defaults(bar, name="defaults"):
     raise RecipeError(f"[{name}.bar] remove must be a list of widget ids")
   for kind in ("add", "move"):
     for entry in bar.get(kind, []):
-      if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not entry.get("id") \
+      if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not plain_text(entry.get("id")) \
               or entry.get("section") not in BAR_SECTIONS:
         raise RecipeError(f"[{name}.bar] {kind} entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
-      if "index" in entry and not (isinstance(entry["index"], int) and entry["index"] >= 0):
+      if "index" in entry and not (type(entry["index"]) is int and entry["index"] >= 0):
         raise RecipeError(f"[{name}.bar] {kind} index must be a whole number")
   for entry in bar.get("set", []):
-    if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str):
+    if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str) \
+            or not (plain_text(entry["id"]) and plain_text(entry["key"])):
       raise RecipeError(f"[{name}.bar] set entries need id, key and a string value")
 
 

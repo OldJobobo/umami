@@ -378,6 +378,69 @@ class RecipeTest(Fixture):
       self.recipe('[[transform]]\nid = "x"\ntype = "patch"\nfile = "a"\nanchor = "b"\n')
 
 
+  def test_a_line_break_in_an_id_is_rejected(self):
+    # The id goes into a Lua comment; the next line would run at login.
+    with self.assertRaisesRegex(RecipeError, "one line"):
+      self.recipe('[[transform]]\nid = "x\\nos.execute(\'id\')"\ntype = "lua.set"\npath = "a"\nvalue = 1\n')
+
+  def test_a_bar_index_is_a_number_not_true(self):
+    with self.assertRaisesRegex(RecipeError, "whole number"):
+      self.recipe('[defaults.bar]\nadd = [{ id = "omarchy.tailscale", section = "right", index = true }]\n')
+
+  def test_a_plugin_id_is_not_a_path(self):
+    escaped = Path(self.tmp.name) / "escaped"
+    write(self.recipe_dir / "evil/manifest.json", json.dumps({"id": str(escaped)}))
+    try:
+      self.compose('[[transform]]\nid = "p"\ntype = "shell.plugins.add"\nsource = "evil"\n')
+    except RecipeError:
+      pass
+    self.assertFalse(escaped.exists())
+
+
+class RemovedTreeTest(unittest.TestCase):
+  def setUp(self):
+    self.tmp = tempfile.TemporaryDirectory()
+    root = Path(self.tmp.name)
+    from umami import system
+    self.system = system
+    self.tree = root / "tree"
+    (self.tree / "bin").mkdir(parents=True)
+    self.conf = root / "omarchy.conf"
+    self.proc = root / "proc"
+    self.proc.mkdir()
+    self.patches = [mock.patch.object(system, name, value) for name, value in
+                    (("TREE", self.tree), ("REMOVED", root / "removed"), ("OMARCHY_CONF", self.conf),
+                     ("PROC", self.proc), ("boot_id", lambda: "this-boot"))]
+    for patch in self.patches:
+      patch.start()
+    (root / "removed").write_text("an-earlier-boot\n")
+
+  def tearDown(self):
+    for patch in self.patches:
+      patch.stop()
+    self.tmp.cleanup()
+
+  def test_goes_after_the_reboot(self):
+    self.conf.write_text('export OMARCHY_PATH="/usr/share/omarchy"\n')
+    with mock.patch("subprocess.run"):
+      self.assertTrue(self.system.clean_removed_tree())
+    self.assertFalse(self.tree.exists())
+
+  def test_stays_while_a_session_runs_from_it(self):
+    # Someone else's session: not the user who ran sudo.
+    self.conf.write_text('export OMARCHY_PATH="/usr/share/omarchy"\n')
+    (self.proc / "4242").mkdir()
+    (self.proc / "4242/environ").write_bytes(b"HOME=/home/alice\0OMARCHY_PATH=" + str(self.tree).encode() + b"\0")
+    self.assertFalse(self.system.clean_removed_tree())
+    self.assertTrue(self.tree.exists())
+
+  def test_stays_when_enabled_again(self):
+    self.conf.write_text(f'export OMARCHY_PATH="{self.tree}"\nexport OMARCHY_PATH_TYPE="flavor"\n')
+    self.assertFalse(self.system.clean_removed_tree())
+    self.assertTrue(self.tree.exists())
+    self.assertFalse(self.system.REMOVED.exists())
+
+
 class LuaTest(unittest.TestCase):
   def test_literal(self):
     self.assertEqual(lua.literal({"general": {"gaps_out": 4, "layout": "dwindle"}}),
@@ -762,6 +825,7 @@ class InstallPackagesTest(unittest.TestCase):
         '  -Q) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
         '  -Qi) var="NEEDS_${3//-/_}"; printf "Name            : %s\\nRequired By     : %s\\n" "$3" "${!var:-None}" ;;\n'
         '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
+        '  -Rnsp) shift 4; printf "%s\\n" "$@" $ORPHANS ;;\n'
         'esac\n')
     (bin_dir / "pacman").chmod(0o755)
     (bin_dir / "omarchy-pkg-add").write_text('#!/bin/bash\necho "add $*" >> "$PACMAN_LOG"\n')
@@ -771,7 +835,9 @@ class InstallPackagesTest(unittest.TestCase):
     self.saved = dict(os.environ)
     os.environ.update({"PATH": f"{bin_dir}:{os.environ['PATH']}", "PACMAN_LOG": str(self.log)})
     from umami import system
-    self.patches = [mock.patch.object(system, "STATE", root), mock.patch.object(system, "PACKAGES", root / "packages.json")]
+    self.suites = {}
+    self.patches = [mock.patch.object(system, "STATE", root), mock.patch.object(system, "PACKAGES", root / "packages.json"),
+                    mock.patch.object(system, "suite_users", lambda: self.suites)]
     for patch in self.patches:
       patch.start()
 
@@ -800,6 +866,26 @@ class InstallPackagesTest(unittest.TestCase):
     # lib is needed only by tool, which goes too; shared is needed by something else.
     self.assertEqual([l for l in self.log.read_text().splitlines() if l.startswith("drop ")], ["drop lib tool"])
     self.assertEqual(installed_packages(), {"shared": "server"})
+
+  def test_the_question_names_the_dependencies_that_go_with_them(self):
+    from umami.system import drop_packages, save_packages
+    save_packages({"tool": "server"})
+    os.environ.update({"INSTALLED": "tool", "ORPHANS": "libtool-only"})
+    with mock.patch("umami.system.confirm", return_value=False) as asked, \
+         mock.patch("umami.ui.say") as said:
+      drop_packages(assume_yes=False)
+    asked.assert_called_once()
+    self.assertIn("libtool-only", " ".join(str(c) for c in said.call_args_list))
+    self.assertFalse(any(l.startswith("drop ") for l in self.log.read_text().splitlines()))
+
+  def test_a_suite_a_user_still_has_keeps_its_package(self):
+    from umami.system import drop_packages, installed_packages, save_packages
+    save_packages({"shibumi-shell": "shibumi", "tool": "server"})
+    os.environ.update({"INSTALLED": "shibumi-shell tool"})
+    self.suites = {"shibumi-shell": ["alice"]}
+    drop_packages(assume_yes=True)
+    self.assertEqual([l for l in self.log.read_text().splitlines() if l.startswith("drop ")], ["drop tool"])
+    self.assertEqual(installed_packages(), {"shibumi-shell": "shibumi"})
 
   def test_a_package_in_no_repository_installs_nothing(self):
     from umami.system import install_packages

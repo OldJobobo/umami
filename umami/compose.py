@@ -303,6 +303,7 @@ class Composer:
     self.add_lua(t, f"bind.remove {keys}", f"hl.unbind({lua.literal(keys)})", r)
 
   def add_lua(self, t, label, chunk, r):
+    label = " ".join(label.split())  # a comment line stays one line
     if t.locked:
       self.locked_chunks.append(f"-- [{t.id}] {label} (locked)\n{chunk}\n")
       self.locked_owners.append(r)
@@ -430,6 +431,9 @@ class Composer:
       raise RecipeError(f"{manifest}: {error}") from error
     if not data.get("id"):
       raise RecipeError(f"{manifest} has no id")
+    # The id names the plugin's directory in the tree.
+    if not (isinstance(data["id"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", data["id"])):
+      raise RecipeError(f"{manifest}: id {data['id']!r} is not a plugin id (letters, digits, . _ -)")
     return data
 
   def t_shell_plugins_add(self, t, r):

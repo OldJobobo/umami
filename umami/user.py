@@ -284,11 +284,13 @@ def run_bar(commands: list, shell_timeout: float) -> list:
 def bar_commands(bar: dict) -> list:
   """Omarchy's own commands for a [defaults.bar] table, in order."""
   commands = [["omarchy-plugin-disable", wid] for wid in bar.get("remove", [])]
-  for entry in bar.get("move", []):
-    command = ["omarchy-bar", "move", entry["id"], "--section", entry["section"]]
-    if "index" in entry:
-      command += ["--index", str(entry["index"])]
-    commands.append(command)
+  # put leaves a widget that is already on the bar where it is.
+  for verb, kind in (("put", "add"), ("move", "move")):
+    for entry in bar.get(kind, []):
+      command = ["omarchy-bar", verb, entry["id"], "--section", entry["section"]]
+      if "index" in entry:
+        command += ["--index", str(entry["index"])]
+      commands.append(command)
   for entry in bar.get("set", []):
     commands.append(["omarchy-bar", "set", entry["id"], entry["key"], entry["value"]])
   return commands

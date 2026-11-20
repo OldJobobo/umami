@@ -131,6 +131,8 @@ def bar_summary(bar: dict) -> str:
   parts = []
   if bar.get("remove"):
     parts.append(f"{plural(len(bar['remove']), 'widget')} off")
+  if bar.get("add"):
+    parts.append(f"{len(bar['add'])} added")
   if bar.get("move"):
     parts.append(f"{len(bar['move'])} moved")
   if bar.get("set"):

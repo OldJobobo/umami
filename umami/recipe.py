@@ -217,21 +217,22 @@ BAR_SECTIONS = {"left", "centerBegin", "center", "centerEnd", "tray", "right"}
 
 
 def check_bar_defaults(bar, name="defaults"):
-  """[defaults.bar] or [locked.bar]: widgets to take off the bar, move, and configure."""
+  """[defaults.bar] or [locked.bar]: widgets to take off the bar, add, move, and configure."""
   if not isinstance(bar, dict):
     raise RecipeError(f"[{name}.bar] must be a table")
-  unknown = set(bar) - {"remove", "move", "set"}
+  unknown = set(bar) - {"remove", "add", "move", "set"}
   if unknown:
     raise RecipeError(f"[{name}.bar]: unknown keys {', '.join(sorted(unknown))}")
   remove = bar.get("remove", [])
   if not (isinstance(remove, list) and all(isinstance(i, str) and i for i in remove)):
     raise RecipeError(f"[{name}.bar] remove must be a list of widget ids")
-  for entry in bar.get("move", []):
-    if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not entry.get("id") \
-            or entry.get("section") not in BAR_SECTIONS:
-      raise RecipeError(f"[{name}.bar] move entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
-    if "index" in entry and not (isinstance(entry["index"], int) and entry["index"] >= 0):
-      raise RecipeError(f"[{name}.bar] move index must be a whole number")
+  for kind in ("add", "move"):
+    for entry in bar.get(kind, []):
+      if not isinstance(entry, dict) or set(entry) - {"id", "section", "index"} or not entry.get("id") \
+              or entry.get("section") not in BAR_SECTIONS:
+        raise RecipeError(f"[{name}.bar] {kind} entries need id and a section ({', '.join(sorted(BAR_SECTIONS))}), optional index")
+      if "index" in entry and not (isinstance(entry["index"], int) and entry["index"] >= 0):
+        raise RecipeError(f"[{name}.bar] {kind} index must be a whole number")
   for entry in bar.get("set", []):
     if not isinstance(entry, dict) or set(entry) != {"id", "key", "value"} or not isinstance(entry["value"], str):
       raise RecipeError(f"[{name}.bar] set entries need id, key and a string value")

@@ -138,6 +138,7 @@ theme = "Vantablack"
 
 [defaults.bar]
 remove = ["omarchy.menu"]                                         # omarchy plugin disable
+add = [{ id = "omarchy.tailscale", section = "right" }]           # omarchy bar put
 move = [{ id = "omarchy.clock", section = "left", index = 0 }]    # omarchy bar move
 set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }] # omarchy bar set
 ```

@@ -176,6 +176,7 @@ class UserLayerTest(unittest.TestCase):
 
         [defaults.bar]
         remove = ["omarchy.menu"]
+        add = [{ id = "omarchy.tailscale", section = "right", index = 0 }]
         move = [{ id = "omarchy.clock", section = "left", index = 0 }]
         set = [{ id = "omarchy.clock", key = "format", value = "HH:mm" }]
     """)
@@ -187,8 +188,8 @@ class UserLayerTest(unittest.TestCase):
     self.assertEqual(user.sync(path, shell_timeout=1), 0)
     calls = self.log.read_text().splitlines()
     bar = [c for c in calls if c.startswith(("disable", "bar"))]
-    self.assertEqual(bar, ["disable omarchy.menu", "bar move omarchy.clock --section left --index 0",
-                           "bar set omarchy.clock format HH:mm"])
+    self.assertEqual(bar, ["disable omarchy.menu", "bar put omarchy.tailscale --section right --index 0",
+                           "bar move omarchy.clock --section left --index 0", "bar set omarchy.clock format HH:mm"])
     self.log.write_text("")
     self.assertEqual(user.sync(path, shell_timeout=1), 0)
     self.assertNotIn("bar", self.log.read_text())

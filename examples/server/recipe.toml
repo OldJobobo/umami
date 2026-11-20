@@ -1,0 +1,231 @@
+# Server: Omarchy for a machine that runs services.
+#
+# A home or office box that runs containers and services, reached over SSH
+# and Tailscale most of the time, with a quick, quiet desktop for when a
+# screen is plugged in. It is still Omarchy underneath: updates, channels,
+# snapshots and the desktop keep working.
+#
+# Less of the desktop: no animations, blur or shadows, no music, chat, notes
+# or web-app shortcuts, and a bar without the world clock, weather, AI usage
+# and keyboard layout. Nothing is locked away: Omarchy's own menus and panels
+# link to its widgets, so taking one out would leave dead buttons behind.
+#
+# More for the machine: Tailscale on the bar, tools for containers, disks,
+# temperatures, backups and the network, and keys for them:
+#
+#   Super + Shift + D          Docker (lazydocker)            (stock)
+#   Super + Shift + T          Activity (btop)                (stock)
+#   Super + Ctrl + Alt + S     internet speed test
+#   Super + Ctrl + Alt + K     disk speed test
+#   Super + Ctrl + I           stay awake: no idle lock       (stock)
+#
+# The browser, editor, file manager and calculator keys stay: a server's web
+# interfaces and config files still need them.
+#
+# Server is declarative: every line is data that umami checks and turns
+# into configuration, and nothing in it runs as written.
+#
+# Not done here, and yours to do once: turning on the services. Omarchy has
+# commands for each, run from a terminal:
+#
+#   omarchy-setup-security-sshd --gh-keys <github-user>   SSH in, firewall open
+#   sudo systemctl enable --now tailscaled && sudo tailscale up
+#   omarchy-setup-security-sudoless-docker                docker without sudo
+
+[flavor]
+name = "server"
+
+# Applied once, at each user's first login on the flavor.
+[defaults]
+theme = "Matte Black"
+
+# Switched off once, so a user can turn any of them back on. Tailscale goes
+# first on the right, where its status and machines are a click away.
+[defaults.bar]
+remove = [
+  "omarchy.elsewhen",
+  "omarchy.weather",
+  "omarchy.agents",
+  "omarchy.keyboard-layout",
+]
+add = [
+  { id = "omarchy.tailscale", section = "right", index = 0 },
+]
+set = [
+  { id = "omarchy.clock", key = "format", value = "ddd d MMM  HH:mm" },
+]
+
+# Installed with the flavor, from the official repositories. Docker, compose,
+# btop, tmux and ufw already come with Omarchy.
+[[package]]
+name = "tailscale"
+note = "Mesh VPN: reach this machine from anywhere, and the Tailscale widget on the bar."
+
+[[package]]
+name = "mosh"
+note = "SSH that survives sleep, roaming and bad links."
+
+[[package]]
+name = "lazydocker"
+note = "Containers in a terminal; turns on Omarchy's Super + Shift + D."
+
+[[package]]
+name = "smartmontools"
+note = "Disk health (smartctl)."
+
+[[package]]
+name = "nvme-cli"
+note = "NVMe health and firmware."
+
+[[package]]
+name = "lm_sensors"
+note = "Temperatures and fans (sensors), which btop also shows."
+
+[[package]]
+name = "restic"
+note = "Encrypted, deduplicated backups."
+
+[[package]]
+name = "rsync"
+note = "Copy and mirror files over SSH."
+
+[[package]]
+name = "iperf3"
+note = "Measure the network between two machines."
+
+[[package]]
+name = "ethtool"
+note = "Link speed and Wake-on-LAN settings."
+
+[[package]]
+name = "ncdu"
+note = "Find what is filling a disk."
+
+# ------------------------------------------------------------------ quiet
+
+[[transform]]
+id = "no-animations"
+type = "lua.set"
+path = "animations.enabled"
+value = false
+
+[[transform]]
+id = "no-blur"
+type = "lua.set"
+path = "decoration.blur.enabled"
+value = false
+
+[[transform]]
+id = "no-shadows"
+type = "lua.set"
+path = "decoration.shadow.enabled"
+value = false
+
+# ------------------------------------------------------- server keys
+
+[[transform]]
+id = "speed-test-key"
+type = "bind.add"
+keys = "SUPER + CTRL + ALT + S"
+description = "Internet speed test"
+action = { panel = "omarchy.speedtest" }
+
+[[transform]]
+id = "disk-speed-test-key"
+type = "bind.add"
+keys = "SUPER + CTRL + ALT + K"
+description = "Disk speed test"
+action = { panel = "omarchy.disk-speedtest" }
+
+# The keys for the world clock and weather, which are off the bar.
+[[transform]]
+id = "no-weather-key"
+type = "bind.remove"
+keys = "SUPER + CTRL + ALT + W"
+
+[[transform]]
+id = "no-world-clock-key"
+type = "bind.remove"
+keys = "SUPER + CTRL + ALT + E"
+
+# ------------------------------------------ no music, chat, notes or web apps
+
+[[transform]]
+id = "no-music"
+type = "bind.remove"
+keys = "SUPER + SHIFT + M"
+
+[[transform]]
+id = "no-music-tui"
+type = "bind.remove"
+keys = "SUPER + SHIFT + ALT + M"
+
+[[transform]]
+id = "no-signal"
+type = "bind.remove"
+keys = "SUPER + SHIFT + G"
+
+[[transform]]
+id = "no-obsidian"
+type = "bind.remove"
+keys = "SUPER + SHIFT + O"
+
+[[transform]]
+id = "no-omawrite"
+type = "bind.remove"
+keys = "SUPER + SHIFT + W"
+
+[[transform]]
+id = "no-chatgpt"
+type = "bind.remove"
+keys = "SUPER + SHIFT + A"
+
+[[transform]]
+id = "no-grok"
+type = "bind.remove"
+keys = "SUPER + SHIFT + ALT + A"
+
+[[transform]]
+id = "no-calendar"
+type = "bind.remove"
+keys = "SUPER + SHIFT + C"
+
+[[transform]]
+id = "no-email"
+type = "bind.remove"
+keys = "SUPER + SHIFT + E"
+
+[[transform]]
+id = "no-new-email"
+type = "bind.remove"
+keys = "SUPER + SHIFT + ALT + E"
+
+[[transform]]
+id = "no-youtube"
+type = "bind.remove"
+keys = "SUPER + SHIFT + Y"
+
+[[transform]]
+id = "no-whatsapp"
+type = "bind.remove"
+keys = "SUPER + SHIFT + ALT + G"
+
+[[transform]]
+id = "no-photos"
+type = "bind.remove"
+keys = "SUPER + SHIFT + P"
+
+[[transform]]
+id = "no-maps"
+type = "bind.remove"
+keys = "SUPER + SHIFT + S"
+
+[[transform]]
+id = "no-x"
+type = "bind.remove"
+keys = "SUPER + SHIFT + X"
+
+[[transform]]
+id = "no-x-post"
+type = "bind.remove"
+keys = "SUPER + SHIFT + ALT + X"

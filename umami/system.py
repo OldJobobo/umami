@@ -25,6 +25,7 @@ REPORT = STATE / "report.json"
 PACKAGES = STATE / "packages.json"
 REMOVED = STATE / "removed"
 SYSTEM = STATE / "system.json"
+DROPPED = STATE / "dropped.json"
 NO_SLEEP = {
     Path("/etc/systemd/logind.conf.d/90-umami-no-sleep.conf"):
         "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n"
@@ -239,7 +240,7 @@ def find_flavor(flavor: str, dirs: list[Path]) -> Path:
   raise UmamiError(f"no flavor {flavor!r}" + (f". Try: {', '.join(names)}" if names else ""))
 
 
-def flavor(flavor: str) -> int:
+def flavor(flavor: str, assume_yes: bool = False) -> int:
   """Install a flavor: a name (your own in ~/.config/umami/flavors, then
   the package's), or a recipe directory. Copies it to /etc/umami,
   composes, and enables it."""
@@ -274,6 +275,7 @@ def flavor(flavor: str) -> int:
   enable(quiet=True)  # what happens next is said below
   for line in apply_system(recipe.system):
     print(line)
+  drop_stock(recipe.drops, recipe.name, assume_yes)
   if live and switch_live(*live):
     ui.say(f"{recipe.name} is running. Hyprland and the shell are reloading.")
   else:
@@ -327,6 +329,68 @@ def install_packages(packages: list, flavor: str = ""):
   if subprocess.run(["omarchy-pkg-add", *missing]).returncode != 0:
     raise UmamiError(f"installing {', '.join(missing)} failed. The current flavor is unchanged.")
   save_packages({**installed_packages(), **{name: flavor for name in missing}})
+
+
+# ---- stock apps a flavor leaves out
+
+def dropped_packages() -> dict:
+  try:
+    record = json.loads(DROPPED.read_text())
+  except (OSError, ValueError):
+    return {}
+  return record if isinstance(record, dict) else {}
+
+
+def save_dropped(record: dict):
+  if record:
+    STATE.mkdir(parents=True, exist_ok=True)
+    DROPPED.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+  else:
+    DROPPED.unlink(missing_ok=True)
+
+
+def reinstall(names: list) -> bool:
+  if not names:
+    return True
+  ui.say(f"Reinstalling {', '.join(names)}, which the flavor had removed")
+  if subprocess.run(["omarchy-pkg-add", *names]).returncode != 0:
+    ui.say(f"Reinstalling them failed; try again with: sudo umami remove, or omarchy-pkg-add {' '.join(names)}")
+    return False
+  return True
+
+
+def drop_stock(names: list, flavor: str, assume_yes: bool):
+  """Remove the apps Omarchy installed that a flavor leaves out, and put
+  back the ones an earlier flavor removed that this one keeps. Omarchy's
+  updates don't reinstall a removed app, so this lasts; umami records each
+  so `umami remove` reinstalls it. Only an app installed on its own goes,
+  never one something else needs."""
+  record = dropped_packages()
+  back = sorted(n for n in record if n not in names)
+  if reinstall(back):
+    record = {n: f for n, f in record.items() if n not in back}
+    save_dropped(record)
+  todo = []
+  for name in names:
+    if name in record or subprocess.run(["pacman", "-Qq", "--", name], capture_output=True).returncode != 0:
+      continue
+    if subprocess.run(["pacman", "-Qqe", "--", name], capture_output=True).returncode != 0:
+      ui.say(f"Keeping {name}: it was installed for another package, not on its own.")
+    elif required_by(name):
+      ui.say(f"Keeping {name}: {', '.join(sorted(required_by(name)))} needs it.")
+    else:
+      todo.append(name)
+  if not todo:
+    return
+  extra = sorted(set(removal_set(todo)) - set(todo))
+  ui.say(f"Apps {flavor} leaves out: {', '.join(todo)}" + (f" (with {', '.join(extra)})" if extra else ""))
+  ui.say("umami remove reinstalls them.")
+  if not (assume_yes or confirm("Remove them?")):
+    ui.say(f"Kept them. Remove them later with: sudo umami flavor {flavor} --yes")
+    return
+  if subprocess.run(["omarchy-pkg-drop", *todo]).returncode != 0:
+    raise UmamiError(f"removing {', '.join(todo)} failed.")
+  save_dropped({**record, **{n: flavor for n in todo}})
 
 
 # ---- [system]: the machine around Omarchy
@@ -651,7 +715,8 @@ def remove(assume_yes: bool = False) -> int:
   require_root()
   cleaned = clean_removed_tree()
   name = load(RECIPE).name if RECIPE.is_file() else ""
-  if not (name or installed_packages() or SYSTEM.is_file() or (TREE.exists() and not REMOVED.is_file())):
+  if not (name or installed_packages() or SYSTEM.is_file() or DROPPED.is_file()
+          or (TREE.exists() and not REMOVED.is_file())):
     if cleaned:
       ui.say("Deleted the removed flavor's files.")
       return 0
@@ -671,6 +736,8 @@ def remove(assume_yes: bool = False) -> int:
     ui.say("For each user, while logged in: umami user-sync --remove puts back the theme and bar and asks about the plugins.")
   for line in apply_system({}):  # before the packages its services come from
     print(line)
+  if reinstall(sorted(dropped_packages())):
+    save_dropped({})
   drop_packages(assume_yes)
 
   current = configured_path()

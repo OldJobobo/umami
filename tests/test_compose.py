@@ -902,7 +902,8 @@ class InstallPackagesTest(unittest.TestCase):
     (bin_dir / "pacman").write_text(
         '#!/bin/bash\necho "$*" >> "$PACMAN_LOG"\n'
         'case $1 in\n'
-        '  -Q) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
+        '  -Q|-Qq) [[ $3 == present-pkg || " $INSTALLED " == *" $3 "* ]] ;;\n'
+        '  -Qqe) [[ " $EXPLICIT " == *" $3 "* ]] ;;\n'
         '  -Qi) var="NEEDS_${3//-/_}"; printf "Name            : %s\\nRequired By     : %s\\n" "$3" "${!var:-None}" ;;\n'
         '  -Si) [[ $3 == repo-pkg ]] && printf "Repository      : omarchy\\nName            : repo-pkg\\n" || exit 1 ;;\n'
         '  -Rsp) shift 4; printf "%s\\n" "$@" $ORPHANS ;;\n'
@@ -917,6 +918,7 @@ class InstallPackagesTest(unittest.TestCase):
     from umami import system
     self.suites = {}
     self.patches = [mock.patch.object(system, "STATE", root), mock.patch.object(system, "PACKAGES", root / "packages.json"),
+                    mock.patch.object(system, "DROPPED", root / "dropped.json"),
                     mock.patch.object(system, "suite_users", lambda: self.suites)]
     for patch in self.patches:
       patch.start()
@@ -966,6 +968,22 @@ class InstallPackagesTest(unittest.TestCase):
     drop_packages(assume_yes=True)
     self.assertEqual([l for l in self.log.read_text().splitlines() if l.startswith("drop ")], ["drop tool"])
     self.assertEqual(installed_packages(), {"shibumi-shell": "shibumi"})
+
+  def test_a_flavor_removes_only_apps_installed_on_their_own(self):
+    from umami import system
+    os.environ.update({"INSTALLED": "office game libdep", "EXPLICIT": "office game", "NEEDS_game": "launcher"})
+    system.drop_stock(["office", "game", "libdep", "absent"], "server", assume_yes=True)
+    # game is needed by something else; libdep came in for another package.
+    self.assertEqual([l for l in self.log.read_text().splitlines() if l.startswith("drop ")], ["drop office"])
+    self.assertEqual(system.dropped_packages(), {"office": "server"})
+
+  def test_the_next_flavor_puts_back_what_it_keeps(self):
+    from umami import system
+    system.save_dropped({"office": "server", "game": "server"})
+    os.environ.update({"INSTALLED": "", "EXPLICIT": ""})
+    system.drop_stock(["game"], "other", assume_yes=True)
+    self.assertEqual(self.installs(), ["add office"])
+    self.assertEqual(system.dropped_packages(), {"game": "server"})
 
   def test_a_package_in_no_repository_installs_nothing(self):
     from umami.system import install_packages

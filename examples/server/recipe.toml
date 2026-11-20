@@ -20,8 +20,9 @@
 #   omarchy-setup-security-sshd --gh-keys <github-user>
 #   sudo tailscale up
 #
-# umami remove puts all of it back as it was, and removes the packages the
-# flavor installed.
+# It also removes Omarchy's media, office and writing apps. umami remove
+# puts all of it back as it was: it reinstalls those apps and removes the
+# packages the flavor installed.
 #
 # When you do start the desktop, it is a quiet one: no animations, blur or
 # shadows, no music, chat, notes or web-app keys, Tailscale on the bar, and
@@ -31,9 +32,6 @@
 #   Super + Shift + T          Activity (btop)                (stock)
 #   Super + Ctrl + Alt + S     internet speed test
 #   Super + Ctrl + Alt + K     disk speed test
-#
-# The desktop apps stay installed: Omarchy's updates own them. With the
-# desktop not starting, they don't run.
 #
 # Server is declarative: every line is data that umami checks and turns
 # into configuration, and nothing in it runs as written.
@@ -120,6 +118,71 @@ note = "Link speed and Wake-on-LAN settings."
 [[package]]
 name = "ncdu"
 note = "Find what is filling a disk."
+
+# Removed with the flavor: Omarchy's apps for media, office work and writing.
+# Omarchy's updates don't put a removed app back; umami remove reinstalls
+# them. An app this machine doesn't have is skipped. LocalSend, the
+# calculator and gliff (remote desktop over SSH) stay.
+
+[[package]]
+name = "obsidian"
+remove = true
+note = "Notes."
+
+[[package]]
+name = "libreoffice-fresh"
+remove = true
+note = "Office suite."
+
+[[package]]
+name = "pinta"
+remove = true
+note = "Image editor."
+
+[[package]]
+name = "cliamp"
+remove = true
+note = "Music player."
+
+[[package]]
+name = "omacut"
+remove = true
+note = "Video trimmer."
+
+[[package]]
+name = "omawrite"
+remove = true
+note = "Writing app."
+
+[[package]]
+name = "monologue"
+remove = true
+note = "Webcam recorder."
+
+[[package]]
+name = "hype"
+remove = true
+note = "Presentations."
+
+[[package]]
+name = "signed"
+remove = true
+note = "PDF signing."
+
+[[package]]
+name = "spotify"
+remove = true
+note = "Music, on older installs."
+
+[[package]]
+name = "signal-desktop"
+remove = true
+note = "Chat, on older installs."
+
+[[package]]
+name = "typora"
+remove = true
+note = "Markdown editor, on older installs."
 
 # ------------------------------------------------------------------ quiet
 

@@ -163,6 +163,8 @@ def extras(report: dict, locked: list) -> list:
     lines.append(f"At each user's first login, theirs to change afterwards: {' · '.join(first_login)}")
   if installs:
     lines.append(f"Installed with the flavor, each user asked before a plugin or suite: {' · '.join(installs)}")
+  if report.get("drops"):
+    lines.append(f"Removed with the flavor, reinstalled by umami remove: {', '.join(report['drops'])}")
   if machine:
     lines.append(f"On the machine, undone by umami remove: {' · '.join(machine)}")
   if over:

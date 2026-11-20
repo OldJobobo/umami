@@ -165,7 +165,8 @@ def main(argv=None) -> int:
 
   pick = sub.add_parser("flavor", help="root: install a flavor (a name, or a directory with recipe.toml), compose and enable it")
   pick.add_argument("flavor")
-  pick.set_defaults(func=lambda args: system.flavor(args.flavor))
+  pick.add_argument("--yes", action="store_true", help="remove the stock apps the flavor leaves out without asking")
+  pick.set_defaults(func=lambda args: system.flavor(args.flavor, assume_yes=args.yes))
 
   remove = sub.add_parser("remove", help="root: remove the flavor: back to stock, its packages, plugins, theme and bar")
   remove.add_argument("--yes", action="store_true", help="remove its packages without asking")

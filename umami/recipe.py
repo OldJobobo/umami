@@ -68,6 +68,7 @@ class Recipe:
   transforms: list = field(default_factory=list)
   plugins: list = field(default_factory=list)
   packages: list = field(default_factory=list)
+  drops: list = field(default_factory=list)
   suites: list = field(default_factory=list)
   defaults: dict = field(default_factory=dict)
   locked: dict = field(default_factory=dict)
@@ -194,7 +195,9 @@ def load(path) -> Recipe:
       raise RecipeError(f"{where} ({raw['id']}): unknown keys {', '.join(sorted(unknown))}")
     recipe.plugins.append(dict(raw))
 
-  recipe.packages = check_packages(data.get("package", []))
+  checked = check_packages(data.get("package", []))
+  recipe.packages = [p for p in checked if not p.get("remove")]
+  recipe.drops = [p["name"] for p in checked if p.get("remove")]
   recipe.suites = check_suites(data.get("suite", []), {p["name"] for p in recipe.packages}, seen_plugins)
 
   # plugin.hypr loads a file from a plugin the user consents to, so the
@@ -300,7 +303,8 @@ SUITE_ARG = re.compile(r"^-{0,2}[A-Za-z0-9][A-Za-z0-9._=-]*$")
 def check_packages(raw_list) -> list:
   """[[package]]: a package from a pacman repository this machine already
   trusts (signed, in pacman.conf), installed by `umami flavor`. Never the
-  AUR, a file or a URL: only a name, which pacman resolves."""
+  AUR, a file or a URL: only a name, which pacman resolves. With
+  remove = true, an app Omarchy installed that the flavor leaves out."""
   if not isinstance(raw_list, list):
     raise RecipeError("[[package]] must be a list of tables")
   packages, seen = [], set()
@@ -308,11 +312,13 @@ def check_packages(raw_list) -> list:
     where = f"package #{index + 1}"
     if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not PACKAGE_NAME.match(raw["name"]):
       raise RecipeError(f"{where}: needs a package name")
-    unknown = set(raw) - {"name", "note"}
+    unknown = set(raw) - {"name", "note", "remove"}
     if unknown:
       raise RecipeError(f"{where} ({raw['name']}): unknown keys {', '.join(sorted(unknown))}")
     if raw["name"] in seen:
       raise RecipeError(f"{where}: duplicate package {raw['name']!r}")
+    if not isinstance(raw.get("remove", False), bool):
+      raise RecipeError(f"{where} ({raw['name']}): remove is true or false")
     seen.add(raw["name"])
     packages.append(dict(raw))
   return packages
